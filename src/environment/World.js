@@ -215,9 +215,9 @@ export class World {
       });
     }
 
-    // 3. PASO 1 (Prioridad Máxima): Geometría Exacta de OpenStreetMap (Overpass en paralelo)
+    // 3. PASO 1 (Prioridad Máxima): Geometría Oficial de OpenStreetMap (API 0.6 Oficial + Overpass Espejos en paralelo)
     try {
-      const osmData = await this.fetchOverpassInParallel(lat, lng, 3500, signal);
+      const osmData = await this.fetchRealStreetsInParallel(lat, lng, 4000, signal);
       if (signal.aborted) return;
       if (
         osmData &&
@@ -242,7 +242,7 @@ export class World {
         return;
       }
     } catch (err) {
-      // Continuar con OSRM si Overpass no está disponible
+      // Continuar con OSRM si OpenStreetMap oficial no está disponible
     }
 
     // 4. PASO 2: Respaldo Rápido con OSRM
@@ -277,7 +277,11 @@ export class World {
     }
   }
 
-  async fetchOverpassInParallel(lat, lng, timeoutMs = 3500, signal = null) {
+  async fetchRealStreetsInParallel(lat, lng, timeoutMs = 4000, signal = null) {
+    // 1. API Oficial de OpenStreetMap (Descarga vectorial pura sin intermediarios ni saturación)
+    const officialFetch = this.fetchOsmOfficialApi(lat, lng, timeoutMs, signal);
+
+    // 2. Espejos Overpass con timeout de protección
     const query = `[out:json][timeout:6];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|living_street|pedestrian|footway)$"](around:420,${lat},${lng});way["leisure"="park"](around:320,${lat},${lng}););out geom;`;
     const encoded = encodeURIComponent(query);
     const endpoints = [
@@ -286,7 +290,7 @@ export class World {
       `https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=${encoded}`
     ];
 
-    const fetchSingle = async (url) => {
+    const fetchSingleOverpass = async (url) => {
       const ctrl = new AbortController();
       const tid = setTimeout(() => ctrl.abort(), timeoutMs);
       const onAbort = () => ctrl.abort();
@@ -309,10 +313,90 @@ export class World {
     };
 
     try {
-      return await Promise.any(endpoints.map(fetchSingle));
+      return await Promise.any([officialFetch, ...endpoints.map(fetchSingleOverpass)]);
     } catch (e) {
       return null;
     }
+  }
+
+  async fetchOsmOfficialApi(lat, lng, timeoutMs = 4000, signal = null) {
+    const delta = 0.0035; // ~390m alrededor del jugador en todas direcciones
+    const minLng = (lng - delta).toFixed(5);
+    const minLat = (lat - delta).toFixed(5);
+    const maxLng = (lng + delta).toFixed(5);
+    const maxLat = (lat + delta).toFixed(5);
+    const url = `https://api.openstreetmap.org/api/0.6/map?bbox=${minLng},${minLat},${maxLng},${maxLat}`;
+
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+    const onAbort = () => ctrl.abort();
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      clearTimeout(tid);
+      if (signal) signal.removeEventListener('abort', onAbort);
+
+      if (res.ok) {
+        const xmlText = await res.text();
+        if (typeof window !== 'undefined' && window.DOMParser) {
+          const parser = new DOMParser();
+          const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+
+          const nodeMap = new Map();
+          const nodeEls = xmlDoc.querySelectorAll('node');
+          for (let i = 0; i < nodeEls.length; i++) {
+            const n = nodeEls[i];
+            const id = n.getAttribute('id');
+            const nLat = parseFloat(n.getAttribute('lat'));
+            const nLng = parseFloat(n.getAttribute('lon'));
+            if (id && Number.isFinite(nLat) && Number.isFinite(nLng)) {
+              nodeMap.set(id, { lat: nLat, lon: nLng });
+            }
+          }
+
+          const elements = [];
+          const wayEls = xmlDoc.querySelectorAll('way');
+          for (let i = 0; i < wayEls.length; i++) {
+            const w = wayEls[i];
+            const tags = {};
+            const tagEls = w.querySelectorAll('tag');
+            for (let j = 0; j < tagEls.length; j++) {
+              const t = tagEls[j];
+              tags[t.getAttribute('k')] = t.getAttribute('v');
+            }
+
+            if (tags.highway || tags.leisure === 'park' || tags.landuse === 'grass') {
+              const geometry = [];
+              const ndEls = w.querySelectorAll('nd');
+              for (let j = 0; j < ndEls.length; j++) {
+                const ref = ndEls[j].getAttribute('ref');
+                const node = nodeMap.get(ref);
+                if (node) {
+                  geometry.push(node);
+                }
+              }
+              if (geometry.length >= 2) {
+                elements.push({
+                  type: 'way',
+                  id: w.getAttribute('id'),
+                  tags,
+                  geometry
+                });
+              }
+            }
+          }
+
+          if (elements.length > 0) {
+            return { elements };
+          }
+        }
+      }
+    } catch (e) {
+      clearTimeout(tid);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    }
+    throw new Error('OSM Official API falló');
   }
 
   async fetchOSRMStreets(lat, lng, signal) {
@@ -526,18 +610,8 @@ export class World {
 
     this.addPublicCircleSpace(originWalk.x, originWalk.z, 6.5, 'Plazoleta de Acceso', true);
 
-    // 4. Añadir parque público vecino si no hay espacios públicos registrados
-    const parkAnchor = this.getNearestWalkablePoint(24, 18);
-    const px = parkAnchor.x + 12;
-    const pz = parkAnchor.z + 10;
-    const parkPts = [
-      { x: px - 14, z: pz - 12 },
-      { x: px + 14, z: pz - 12 },
-      { x: px + 14, z: pz + 12 },
-      { x: px - 14, z: pz + 12 }
-    ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z, baseLat, baseLng, scale) }));
-    this.addPublicPolygonSpace(parkPts, { xMin: px - 14, xMax: px + 14, zMin: pz - 12, zMax: pz + 12 }, 'Parque Vecinal');
-    this.addRoadSegment(parkAnchor.x, parkAnchor.z, px, pz, 4.0, 'Sendero al Parque', 'footway', true);
+    // 4. Parques y Espacios Públicos: Solo se registran si provienen de datos geográficos reales
+    // Se evita crear polígonos sintéticos arbitrarios que desfacen la realidad del mapa.
 
     // 5. Edificios suburbanos y farolas a lo largo de las vías
     this.renderSuburbanBlocks();
@@ -654,24 +728,7 @@ export class World {
     const originWalk = this.getNearestWalkablePoint(0, 0);
     this.addPublicCircleSpace(originWalk.x, originWalk.z, 6.5, 'Plazoleta de Acceso Público', true);
 
-    if (this.publicSpaces.length <= 1) {
-      const parkAnchor = this.getNearestWalkablePoint(16, 12);
-      const px = parkAnchor.x + 10;
-      const pz = parkAnchor.z + 8;
-      const fallbackPts = [
-        { x: px - 12, z: pz - 10 },
-        { x: px + 12, z: pz - 10 },
-        { x: px + 12, z: pz + 10 },
-        { x: px - 12, z: pz + 10 }
-      ];
-      const latLngPts = fallbackPts.map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z) }));
-      this.addPublicPolygonSpace(
-        latLngPts,
-        { xMin: px - 12, xMax: px + 12, zMin: pz - 10, zMax: pz + 10 },
-        'Parque Vecinal Público'
-      );
-      this.addRoadSegment(parkAnchor.x, parkAnchor.z, px, pz, 4.2, 'Sendero al Parque', 'footway', true);
-    }
+    // Solo conservar espacios públicos reales descargados desde OpenStreetMap
 
     // 3. Bloques suburbanos agradables y ligeros (sin sobrecargar con cientos de edificios)
     this.renderSuburbanBlocks();
