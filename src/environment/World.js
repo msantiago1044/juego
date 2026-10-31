@@ -281,8 +281,8 @@ export class World {
     // 1. API Oficial de OpenStreetMap (Descarga vectorial pura sin intermediarios ni saturación)
     const officialFetch = this.fetchOsmOfficialApi(lat, lng, timeoutMs, signal);
 
-    // 2. Espejos Overpass con timeout de protección y cobertura completa de parques, canchas y arroyos
-    const query = `[out:json][timeout:7];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|living_street|pedestrian|footway)$"](around:500,${lat},${lng});way["leisure"~"^(park|pitch|playground|garden|recreation_ground|sports_centre)$"](around:500,${lat},${lng});way["landuse"~"^(grass|village_green|recreation_ground|meadow)$"](around:500,${lat},${lng});way["waterway"~"^(stream|drain|canal)$"](around:500,${lat},${lng}););out geom;`;
+    // 2. Espejos Overpass con timeout de protección y cobertura completa de edificios, mar, parques y arroyos
+    const query = `[out:json][timeout:7];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|living_street|pedestrian|footway)$"](around:450,${lat},${lng});way["building"](around:350,${lat},${lng});way["leisure"~"^(park|pitch|playground|garden|recreation_ground|sports_centre)$"](around:450,${lat},${lng});way["landuse"~"^(grass|village_green|recreation_ground|meadow)$"](around:450,${lat},${lng});way["waterway"~"^(stream|drain|canal)$"](around:450,${lat},${lng});way["natural"~"^(coastline|water|beach)$"](around:500,${lat},${lng}););out geom;`;
     const encoded = encodeURIComponent(query);
     const endpoints = [
       `https://overpass-api.de/api/interpreter?data=${encoded}`,
@@ -367,11 +367,13 @@ export class World {
             }
 
             const isHighway = Boolean(tags.highway);
+            const isBuilding = Boolean(tags.building);
             const isPark = /^(park|pitch|playground|garden|recreation_ground|sports_centre)$/.test(tags.leisure) ||
                            /^(grass|village_green|recreation_ground|meadow)$/.test(tags.landuse);
             const isWaterway = Boolean(tags.waterway);
+            const isNatural = /^(coastline|water|beach)$/.test(tags.natural);
 
-            if (isHighway || isPark || isWaterway) {
+            if (isHighway || isBuilding || isPark || isWaterway || isNatural) {
               const geometry = [];
               const ndEls = w.querySelectorAll('nd');
               for (let j = 0; j < ndEls.length; j++) {
@@ -637,12 +639,16 @@ export class World {
     const highwayWays = [];
     const parkWays = [];
     const waterwayWays = [];
+    const buildingWays = [];
+    const naturalWays = [];
 
     for (const el of osmData.elements) {
       if (el.type === 'way') {
         const tags = el.tags || {};
         if (tags.highway) {
           highwayWays.push(el);
+        } else if (tags.building) {
+          buildingWays.push(el);
         } else if (
           /^(park|pitch|playground|garden|recreation_ground|sports_centre|common)$/.test(tags.leisure) ||
           /^(grass|village_green|recreation_ground|meadow)$/.test(tags.landuse)
@@ -650,6 +656,8 @@ export class World {
           parkWays.push(el);
         } else if (tags.waterway) {
           waterwayWays.push(el);
+        } else if (/^(coastline|water|beach)$/.test(tags.natural)) {
+          naturalWays.push(el);
         }
       }
     }
@@ -761,17 +769,184 @@ export class World {
 
     // Solo conservar espacios públicos reales descargados desde OpenStreetMap
 
-    // 3. Bloques suburbanos agradables y ligeros (sin sobrecargar con cientos de edificios)
-    this.renderSuburbanBlocks();
+    // 4. Procesar y renderizar COSTA, MAR Y PLAYAS REALES
+    this.renderNaturalWaterAndBeaches(naturalWays, extractPoints);
 
-    // 4. Farolas urbanas a lo largo de las vías públicas
+    // 5. Procesar y renderizar EDIFICIOS REALES DE OPENSTREETMAP con sus alturas y fachadas
+    let buildingCount = 0;
+    if (buildingWays.length > 0) {
+      buildingCount = this.renderRealOsmBuildings(buildingWays, extractPoints);
+    }
+    if (buildingCount === 0) {
+      // Bloques suburbanos agradables como respaldo si no hay edificios detallados en la base de datos
+      this.renderSuburbanBlocks();
+    }
+
+    // 6. Farolas urbanas a lo largo de las vías públicas
     this.populateAlongRealStreets();
 
     return {
       roadCount: this.roadSegments.length,
       parkCount: this.publicSpaces.length,
-      buildingCount: 0
+      buildingCount
     };
+  }
+
+  renderNaturalWaterAndBeaches(naturalWays, extractPoints) {
+    let hasCoastline = false;
+    for (const way of naturalWays) {
+      const tags = way.tags || {};
+      const pts = extractPoints(way);
+      if (pts.length < 2) continue;
+
+      if (tags.natural === 'beach') {
+        if (pts.length >= 3) {
+          const shape = new THREE.Shape();
+          shape.moveTo(pts[0].x, -pts[0].z);
+          for (let i = 1; i < pts.length; i++) {
+            shape.lineTo(pts[i].x, -pts[i].z);
+          }
+          shape.closePath();
+          const beachGeo = new THREE.ShapeGeometry(shape);
+          beachGeo.rotateX(-Math.PI / 2);
+          const beachMat = new THREE.MeshLambertMaterial({ color: 0xfef08a, side: THREE.DoubleSide });
+          const beachMesh = new THREE.Mesh(beachGeo, beachMat);
+          beachMesh.position.y = 0.012;
+          this.dynamicWorldGroup.add(beachMesh);
+        }
+      } else if (tags.natural === 'water' || tags.natural === 'coastline') {
+        hasCoastline = true;
+        if (pts.length >= 3) {
+          const shape = new THREE.Shape();
+          shape.moveTo(pts[0].x, -pts[0].z);
+          for (let i = 1; i < pts.length; i++) {
+            shape.lineTo(pts[i].x, -pts[i].z);
+          }
+          shape.closePath();
+          const waterGeo = new THREE.ShapeGeometry(shape);
+          waterGeo.rotateX(-Math.PI / 2);
+          const waterMat = new THREE.MeshLambertMaterial({ color: 0x0284c7, transparent: true, opacity: 0.88, side: THREE.DoubleSide });
+          const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+          waterMesh.position.y = 0.01;
+          this.dynamicWorldGroup.add(waterMesh);
+        }
+      }
+    }
+
+    // Si la zona es costera o tiene línea de playa/mar detectada, renderizar mar caribeño expansivo al oeste
+    if (hasCoastline || (this.baseCoords && this.baseCoords.lng < -74.95)) {
+      const oceanGeo = new THREE.PlaneGeometry(600, 600);
+      const oceanMat = new THREE.MeshLambertMaterial({
+        color: 0x0284c7,
+        transparent: true,
+        opacity: 0.85
+      });
+      const oceanMesh = new THREE.Mesh(oceanGeo, oceanMat);
+      oceanMesh.rotation.x = -Math.PI / 2;
+      oceanMesh.position.set(-260, -0.05, 0);
+      this.dynamicWorldGroup.add(oceanMesh);
+    }
+  }
+
+  renderRealOsmBuildings(buildingWays, extractPoints) {
+    const wallPalette = [0xf8fafc, 0xfef3c7, 0xf1f5f9, 0xffedd5, 0xe0f2fe, 0xfef9c3, 0xfde047];
+    const roofPalette = [0xef4444, 0x3b82f6, 0x10b981, 0xf59e0b, 0x64748b, 0x8b5cf6];
+
+    let count = 0;
+    const maxBuildings = 70; // Optimizado para 60 FPS fluidos en móviles y PC
+
+    for (let i = 0; i < buildingWays.length && count < maxBuildings; i++) {
+      const way = buildingWays[i];
+      const tags = way.tags || {};
+      const pts = extractPoints(way);
+      if (pts.length < 3) continue;
+
+      let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
+      for (const p of pts) {
+        if (p.x < xMin) xMin = p.x;
+        if (p.x > xMax) xMax = p.x;
+        if (p.z < zMin) zMin = p.z;
+        if (p.z > zMax) zMax = p.z;
+      }
+
+      const cx = (xMin + xMax) * 0.5;
+      const cz = (zMin + zMax) * 0.5;
+      const distToCenter = Math.hypot(cx, cz);
+      if (distToCenter > 240) continue;
+
+      // Si el edificio cae exactamente en medio de una calle principal transitable, omitir
+      if (this.isPositionWalkable(cx, cz, -0.8)) continue;
+
+      // Calcular altura real según etiquetas de OpenStreetMap
+      let height = 4.8;
+      if (tags.height) {
+        height = Math.max(3.0, Math.min(35.0, parseFloat(tags.height) || 4.8));
+      } else if (tags['building:levels']) {
+        const lvls = parseInt(tags['building:levels'], 10) || 1;
+        height = Math.max(3.2, Math.min(35.0, lvls * 3.3));
+      } else if (/^(commercial|retail|office|school|hospital|apartments)$/.test(tags.building)) {
+        height = 8.5;
+      } else {
+        height = 4.5 + (count % 3) * 1.8;
+      }
+
+      try {
+        const shape = new THREE.Shape();
+        shape.moveTo(pts[0].x, -pts[0].z);
+        for (let j = 1; j < pts.length; j++) {
+          shape.lineTo(pts[j].x, -pts[j].z);
+        }
+        shape.closePath();
+
+        const extrudeGeo = new THREE.ExtrudeGeometry(shape, {
+          depth: height,
+          bevelEnabled: false
+        });
+        extrudeGeo.rotateX(-Math.PI / 2);
+
+        const wallColor = wallPalette[count % wallPalette.length];
+        const wallMat = new THREE.MeshLambertMaterial({ color: wallColor });
+        const buildingMesh = new THREE.Mesh(extrudeGeo, wallMat);
+        buildingMesh.position.y = 0;
+        buildingMesh.castShadow = true;
+        buildingMesh.receiveShadow = true;
+        this.dynamicWorldGroup.add(buildingMesh);
+
+        // Tejado sutil o acento superior
+        const roofShape = new THREE.Shape();
+        roofShape.moveTo(pts[0].x, -pts[0].z);
+        for (let j = 1; j < pts.length; j++) {
+          roofShape.lineTo(pts[j].x, -pts[j].z);
+        }
+        roofShape.closePath();
+        const roofGeo = new THREE.ShapeGeometry(roofShape);
+        roofGeo.rotateX(-Math.PI / 2);
+        const roofColor = roofPalette[count % roofPalette.length];
+        const roofMat = new THREE.MeshLambertMaterial({ color: roofColor, side: THREE.DoubleSide });
+        const roofMesh = new THREE.Mesh(roofGeo, roofMat);
+        roofMesh.position.y = height + 0.05;
+        this.dynamicWorldGroup.add(roofMesh);
+
+        // Registrar colisión física sólida del edificio
+        const width = Math.max(2.0, xMax - xMin);
+        const depth = Math.max(2.0, zMax - zMin);
+        const box = new THREE.Box3();
+        box.setFromCenterAndSize(
+          new THREE.Vector3(cx, height * 0.5, cz),
+          new THREE.Vector3(width * 0.95, height, depth * 0.95)
+        );
+        if (this.physicsWorld) {
+          const bLabel = tags.name || `Edificio Real (${tags.building || 'Urbano'})`;
+          this.physicsWorld.addStaticBox(box, { label: bLabel });
+        }
+
+        count++;
+      } catch (e) {
+        // Continuar si algún polígono es auto-intersecante
+      }
+    }
+
+    return count;
   }
 
   renderSuburbanBlocks() {
