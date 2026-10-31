@@ -41,10 +41,6 @@ export class Player {
     this.boxCollider = new THREE.Box3();
   }
 
-  setSpeedMultiplier(factor) {
-    this.speedMultiplier = (factor === 2 || factor === 3) ? factor : 1;
-  }
-
   createMesh() {
     this.mesh = new THREE.Group();
 
