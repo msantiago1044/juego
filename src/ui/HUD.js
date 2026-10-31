@@ -4,6 +4,7 @@ export class HUD {
     this.container = container;
     this.game = gameContext;
     this.bannerTimeout = null;
+    this.osmStatusTimeout = null;
 
     // Callbacks para controles táctiles y botones de acción rápida
     this.onJoystickMove = null;
@@ -48,6 +49,12 @@ export class HUD {
           <div class="hud-money" id="hud-money">💵 $2,500.00</div>
           <div class="hud-defcon" id="hud-defcon">DEFCON 4</div>
         </div>
+      </div>
+
+      <!-- Notificación flotante de estado de descarga de OpenStreetMap (HUD) -->
+      <div class="hud-osm-status-pill hidden" id="hud-osm-status-pill">
+        <span class="osm-status-icon" id="hud-osm-status-icon">🔄</span>
+        <span class="osm-status-text" id="hud-osm-status-text">Descargando calles reales...</span>
       </div>
 
       <!-- Cartel de Zona Estilo Pokémon (Esquina Superior Izquierda) -->
@@ -777,6 +784,47 @@ export class HUD {
     this.bannerTimeout = setTimeout(() => {
       bannerEl.classList.remove('banner-visible');
     }, 3800);
+  }
+
+  showOsmStatus(status, message) {
+    const pill = this.hudEl.querySelector('#hud-osm-status-pill');
+    const textEl = this.hudEl.querySelector('#hud-osm-status-text');
+    const iconEl = this.hudEl.querySelector('#hud-osm-status-icon');
+    if (!pill || !textEl) return;
+
+    if (this.osmStatusTimeout) {
+      clearTimeout(this.osmStatusTimeout);
+      this.osmStatusTimeout = null;
+    }
+
+    textEl.innerText = message || '';
+    pill.classList.remove('hidden', 'osm-loading', 'osm-success', 'osm-warning', 'osm-fading');
+
+    if (status === 'loading') {
+      pill.classList.add('osm-loading');
+      if (iconEl) iconEl.innerText = '🔄';
+    } else if (status === 'success') {
+      pill.classList.add('osm-success');
+      if (iconEl) iconEl.innerText = '✅';
+      // Desvanecer suavemente después de 4 segundos
+      this.osmStatusTimeout = setTimeout(() => {
+        pill.classList.add('osm-fading');
+        setTimeout(() => {
+          pill.classList.add('hidden');
+          pill.classList.remove('osm-fading');
+        }, 500);
+      }, 4000);
+    } else if (status === 'warning' || status === 'error') {
+      pill.classList.add('osm-warning');
+      if (iconEl) iconEl.innerText = '⚠️';
+      this.osmStatusTimeout = setTimeout(() => {
+        pill.classList.add('osm-fading');
+        setTimeout(() => {
+          pill.classList.add('hidden');
+          pill.classList.remove('osm-fading');
+        }, 500);
+      }, 6000);
+    }
   }
 
   update() {

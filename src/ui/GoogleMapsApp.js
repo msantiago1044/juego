@@ -97,6 +97,8 @@ export class GoogleMapsApp {
     // Detectar ubicación real automáticamente (Chip GPS de alta precisión -> Modal de Ubicación Exacta si HTTP bloquea GPS)
     this.gpsWatchId = null;
     this.lastWatchCoords = null;
+    this.gpsPendingDelta = { x: 0, z: 0 };
+    this.gpsTargetWorldOffset = { x: 0, z: 0 };
     this.autoDetectLocation(false);
     this.startLiveGpsTracking();
   }
@@ -156,6 +158,12 @@ export class GoogleMapsApp {
 
     this.gpsWatchId = navigator.geolocation.watchPosition(
       (pos) => {
+        // Filtro de precisión satelital: ignorar lecturas con error mayor a 45 metros para evitar saltos
+        const accuracy = pos.coords.accuracy;
+        if (Number.isFinite(accuracy) && accuracy > 45) {
+          return;
+        }
+
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
         this.realGpsCoords = { lat, lng };
@@ -167,41 +175,46 @@ export class GoogleMapsApp {
           this.game?.hud?.closeGpsSetupModal?.();
         }
 
-        if (this.lastWatchCoords && this.game && this.game.player) {
-          const dLat = lat - this.lastWatchCoords.lat;
-          const dLng = lng - this.lastWatchCoords.lng;
-          const metersPerDegreeLat = 111139;
-          const rad = this.baseCoords.lat * (Math.PI / 180);
-          const metersPerDegreeLng = 111139 * Math.cos(rad);
-
-          const northMeters = dLat * metersPerDegreeLat;
-          const eastMeters = dLng * metersPerDegreeLng;
-          const distMoved = Math.hypot(northMeters, eastMeters);
-
-          if (distMoved >= 0.5 && distMoved <= 250) {
-            const deltaWorldZ = -northMeters / this.movementScale;
-            const deltaWorldX = eastMeters / this.movementScale;
-            const targetPos = this.game.player.position.clone();
-            targetPos.x += deltaWorldX;
-            targetPos.z += deltaWorldZ;
-
-            const clamped = this.game.world
-              ? this.game.world.clampToWalkable(this.game.player.position, targetPos)
-              : targetPos;
-
-            this.game.player.position.copy(clamped);
-            if (this.game.player.isInVehicle && this.game.vehicle) {
-              this.game.vehicle.position.copy(clamped);
-            }
-          }
+        if (!this.lastWatchCoords) {
+          this.lastWatchCoords = { lat, lng };
+          return;
         }
 
-        this.lastWatchCoords = { lat, lng };
+        const dLat = lat - this.lastWatchCoords.lat;
+        const dLng = lng - this.lastWatchCoords.lng;
+        const metersPerDegreeLat = 111139;
+        const rad = this.baseCoords.lat * (Math.PI / 180);
+        const metersPerDegreeLng = 111139 * Math.cos(rad);
+
+        const northMeters = dLat * metersPerDegreeLat;
+        const eastMeters = dLng * metersPerDegreeLng;
+        const distMoved = Math.hypot(northMeters, eastMeters);
+
+        // Deadband filter: si distMoved < 2.5 metros, tratar como ruido estacionario y NO mover el personaje
+        if (distMoved < 2.5) {
+          return;
+        }
+
+        // Caminata real detectada (entre 2.5m y 150m)
+        if (distMoved <= 150) {
+          const deltaWorldZ = -northMeters / this.movementScale;
+          const deltaWorldX = eastMeters / this.movementScale;
+
+          this.gpsPendingDelta.x += deltaWorldX;
+          this.gpsPendingDelta.z += deltaWorldZ;
+          this.gpsTargetWorldOffset.x += deltaWorldX;
+          this.gpsTargetWorldOffset.z += deltaWorldZ;
+
+          this.lastWatchCoords = { lat, lng };
+        } else {
+          // Desplazamiento anormalmente grande (> 150m), actualizar ancla sin saltos bruscos
+          this.lastWatchCoords = { lat, lng };
+        }
       },
       () => {
         // Silencioso si el navegador bloquea watchPosition en HTTP LAN
       },
-      { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 2500, timeout: 10000 }
     );
   }
 
@@ -210,6 +223,8 @@ export class GoogleMapsApp {
       this.baseCoords = { lat, lng };
       this.currentCoords = { lat, lng };
       this.lastWatchCoords = { lat, lng };
+      this.gpsPendingDelta = { x: 0, z: 0 };
+      this.gpsTargetWorldOffset = { x: 0, z: 0 };
 
       this.sync3DWorldWithBaseCoords();
 
@@ -387,6 +402,9 @@ export class GoogleMapsApp {
   calibrateExactGpsPoint(lat, lng, customCity = null, customStreet = null, source = 'user_pin') {
     this.isCalibratingGpsPin = false;
     this.realGpsCoords = { lat, lng };
+    this.lastWatchCoords = { lat, lng };
+    this.gpsPendingDelta = { x: 0, z: 0 };
+    this.gpsTargetWorldOffset = { x: 0, z: 0 };
     this.hasVerifiedGps = true;
     this.verifiedGpsSource = source;
 
@@ -1273,6 +1291,8 @@ export class GoogleMapsApp {
     }
 
     this.game.player.position.set(worldX, 0.1, worldZ);
+    this.gpsPendingDelta = { x: 0, z: 0 };
+    this.gpsTargetWorldOffset = { x: 0, z: 0 };
     if (this.game.player.isInVehicle && this.game.vehicle) {
       this.game.vehicle.position.set(worldX, 0.1, worldZ);
       this.game.vehicle.speed = 0;
@@ -1421,7 +1441,47 @@ export class GoogleMapsApp {
     return R * c;
   }
 
-  update() {
+  update(dt = 0.016) {
+    // 1. Interpolación suave del GPS (anti-shake & jitter stabilization)
+    if (this.gpsPendingDelta) {
+      const pendingDist = Math.hypot(this.gpsPendingDelta.x, this.gpsPendingDelta.z);
+      if (pendingDist > 0.02) {
+        const safeDt = Math.min(Math.max(dt || 0.016, 0.001), 0.1);
+        const lerpFactor = 1.0 - Math.exp(-safeDt * 4.5); // Amortiguación exponencial suave
+        const stepX = this.gpsPendingDelta.x * lerpFactor;
+        const stepZ = this.gpsPendingDelta.z * lerpFactor;
+
+        if (this.game && this.game.player) {
+          const currentPos = this.game.player.position;
+          const targetPos = currentPos.clone();
+          targetPos.x += stepX;
+          targetPos.z += stepZ;
+
+          const clamped = this.game.world
+            ? this.game.world.clampToWalkable(currentPos, targetPos)
+            : targetPos;
+
+          this.game.player.position.copy(clamped);
+          if (this.game.player.mesh) {
+            this.game.player.mesh.position.copy(clamped);
+          }
+          if (this.game.player.isInVehicle && this.game.vehicle) {
+            this.game.vehicle.position.copy(clamped);
+            if (this.game.vehicle.mesh) {
+              this.game.vehicle.mesh.position.copy(clamped);
+            }
+          }
+        }
+
+        this.gpsPendingDelta.x -= stepX;
+        this.gpsPendingDelta.z -= stepZ;
+      } else {
+        this.gpsPendingDelta.x = 0;
+        this.gpsPendingDelta.z = 0;
+      }
+    }
+
+    // 2. Sincronización del mapa Leaflet 2D si está inicializado
     if (this.map && this.playerMarker) {
       this.updatePlayerCoordinates();
       this.playerMarker.setLatLng([this.currentCoords.lat, this.currentCoords.lng]);

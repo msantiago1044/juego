@@ -183,6 +183,11 @@ class GameApp {
           this.hud.showPrivatePropertyWarning();
         }
       };
+      this.world.onStatusChange = (statusInfo) => {
+        if (this.hud && statusInfo) {
+          this.hud.showOsmStatus(statusInfo.status, statusInfo.message);
+        }
+      };
     }
 
     // Conectar callbacks de controles móviles y acciones rápidas del HUD
@@ -392,8 +397,11 @@ class GameApp {
     // 5. Prompts y HUD
     this.updateInteractionsPrompt();
     this.hud.update();
-    if (this.smartphoneUI) {
+    if (this.smartphoneUI && typeof this.smartphoneUI.update === 'function') {
       this.smartphoneUI.update();
+    }
+    if (this.gameContext?.mapsApp) {
+      this.gameContext.mapsApp.update(dt);
     }
 
     // 6. Renderizar escena

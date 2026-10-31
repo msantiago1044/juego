@@ -21,6 +21,7 @@ export class World {
     this.lastBlockedNoticeTime = 0;
     this.onBlockedByPrivateProperty = null;
     this.onWorldGeometryReady = null;
+    this.onStatusChange = null;
 
     this.baseCoords = { lat: 10.9685, lng: -74.7813 };
     this.movementScale = 2.8;
@@ -147,29 +148,63 @@ export class World {
     this.baseCoords = { lat, lng };
     this.movementScale = movementScale || 2.8;
 
+    const cacheKey = `osm_cache_${lat.toFixed(4)}_${lng.toFixed(4)}`;
     const coordKey = `${lat.toFixed(4)}_${lng.toFixed(4)}`;
+
     if (this.osmAbortController) {
       this.osmAbortController.abort();
     }
     this.osmAbortController = new AbortController();
     const signal = this.osmAbortController.signal;
 
-    // 1. Construir red inmediata de respaldo para que el jugador pueda caminar al instante sin bloqueo
+    // 1. Revisar caché local en sessionStorage para carga inmediata con latencia de 0ms
+    try {
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) {
+        const osmData = JSON.parse(cached);
+        if (osmData && Array.isArray(osmData.elements) && osmData.elements.length > 0) {
+          this.lastLoadedCoordKey = coordKey;
+          const stats = this.buildFromOSMData(osmData, lat, lng, this.movementScale);
+          if (typeof this.onStatusChange === 'function') {
+            this.onStatusChange({
+              status: 'success',
+              message: `Calles reales cargadas (${stats.roadCount} vías, ${stats.parkCount} espacios públicos)`
+            });
+          }
+          if (typeof this.onWorldGeometryReady === 'function') {
+            this.onWorldGeometryReady({ source: 'osm_cache', lat, lng, stats });
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      // Ignorar errores de lectura en caché
+    }
+
+    // 2. Construir red inmediata de respaldo para que el jugador pueda caminar al instante sin bloqueo
     this.clearDynamicWorld();
     this.buildFallbackNeighborhood();
     if (typeof this.onWorldGeometryReady === 'function') {
       this.onWorldGeometryReady({ source: 'fallback', lat, lng });
     }
 
-    // 2. Consultar OpenStreetMap Overpass API para obtener vías públicas, parques/plazas y edificios reales
+    // Notificar al HUD que se están descargando las calles reales
+    if (typeof this.onStatusChange === 'function') {
+      this.onStatusChange({
+        status: 'loading',
+        message: 'Descargando calles reales...'
+      });
+    }
+
+    // 3. Consultar OpenStreetMap Overpass API optimizado (radio 280m para respuesta ultrarrápida)
     const query = `
-      [out:json][timeout:12];
+      [out:json][timeout:10];
       (
-        way["highway"](around:420,${lat},${lng});
-        way["leisure"~"park|plaza|garden|playground|pitch|recreation_ground"](around:420,${lat},${lng});
-        way["landuse"~"grass|recreation_ground|village_green"](around:420,${lat},${lng});
-        way["place"="square"](around:420,${lat},${lng});
-        way["building"](around:320,${lat},${lng});
+        way["highway"](around:280,${lat},${lng});
+        way["leisure"~"park|plaza|garden|playground|pitch|recreation_ground"](around:280,${lat},${lng});
+        way["landuse"~"grass|recreation_ground|village_green"](around:280,${lat},${lng});
+        way["place"="square"](around:280,${lat},${lng});
+        way["building"](around:220,${lat},${lng});
       );
       out body;
       >;
@@ -178,18 +213,29 @@ export class World {
 
     const endpoints = [
       'https://overpass-api.de/api/interpreter',
-      'https://overpass.kumi.systems/api/interpreter'
+      'https://overpass.kumi.systems/api/interpreter',
+      'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+      'https://overpass.private.coffee/api/interpreter'
     ];
 
     let osmData = null;
     for (const url of endpoints) {
+      if (signal.aborted) return;
       try {
+        const timeoutController = new AbortController();
+        const timeoutId = setTimeout(() => timeoutController.abort(), 7500);
+        const combinedAbort = () => timeoutController.abort();
+        signal.addEventListener('abort', combinedAbort, { once: true });
+
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
           body: `data=${encodeURIComponent(query)}`,
-          signal
+          signal: timeoutController.signal
         });
+        clearTimeout(timeoutId);
+        signal.removeEventListener('abort', combinedAbort);
+
         if (res.ok) {
           const json = await res.json();
           if (json && Array.isArray(json.elements) && json.elements.length > 0) {
@@ -199,19 +245,52 @@ export class World {
         }
       } catch (err) {
         if (signal.aborted) return;
+        // Intentar siguiente espejo Overpass
       }
     }
 
-    if (signal.aborted || !osmData) return;
+    if (signal.aborted) return;
+
+    if (!osmData || !Array.isArray(osmData.elements) || osmData.elements.length === 0) {
+      if (typeof this.onStatusChange === 'function') {
+        this.onStatusChange({
+          status: 'warning',
+          message: 'Servidores OSM ocupados; usando red de respaldo mientras reintenta...'
+        });
+      }
+      return;
+    }
 
     const hasHighways = osmData.elements.some(el => el.type === 'way' && el.tags && el.tags.highway);
-    if (!hasHighways) return;
+    if (!hasHighways) {
+      if (typeof this.onStatusChange === 'function') {
+        this.onStatusChange({
+          status: 'warning',
+          message: 'No se encontraron vías públicas en el radio consultado.'
+        });
+      }
+      return;
+    }
+
+    // Guardar en sessionStorage para próximas visitas instantáneas con 0ms de latencia
+    try {
+      sessionStorage.setItem(cacheKey, JSON.stringify(osmData));
+    } catch (e) {
+      // Cuota excedida de sessionStorage o modo incógnito
+    }
 
     this.lastLoadedCoordKey = coordKey;
-    this.buildFromOSMData(osmData, lat, lng, this.movementScale);
+    const stats = this.buildFromOSMData(osmData, lat, lng, this.movementScale);
+
+    if (typeof this.onStatusChange === 'function') {
+      this.onStatusChange({
+        status: 'success',
+        message: `Calles reales cargadas (${stats.roadCount} vías, ${stats.parkCount} espacios públicos)`
+      });
+    }
 
     if (typeof this.onWorldGeometryReady === 'function') {
-      this.onWorldGeometryReady({ source: 'osm', lat, lng });
+      this.onWorldGeometryReady({ source: 'osm', lat, lng, stats });
     }
   }
 
@@ -407,6 +486,12 @@ export class World {
 
     // 5. Ubicar los 7 puntos interactivos sobre las vías públicas reales para que sean 100% accesibles
     this.setupInteractiveSpotsOnStreets();
+
+    return {
+      roadCount: this.roadSegments.length,
+      parkCount: this.publicSpaces.length,
+      buildingCount: renderedBuildings
+    };
   }
 
   addRoadSegment(ax, az, bx, bz, width = 5.0, name = 'Calle Pública', highwayType = 'residential', isPedestrian = false, aLat = null, aLng = null, bLat = null, bLng = null) {
