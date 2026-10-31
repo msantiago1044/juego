@@ -14,6 +14,7 @@ export class Player {
     // Físicas biológicas
     this.walkSpeed = 4.8; // m/s (~17 km/h)
     this.sprintSpeed = 8.5; // m/s (~30 km/h)
+    this.speedMultiplier = 1; // 1x normal, 2x rápido, 3x turbo
     this.jumpForce = 6.8;
     this.isGrounded = true;
     this.stamina = 100;
@@ -38,6 +39,10 @@ export class Player {
 
     this.createMesh();
     this.boxCollider = new THREE.Box3();
+  }
+
+  setSpeedMultiplier(factor) {
+    this.speedMultiplier = (factor === 2 || factor === 3) ? factor : 1;
   }
 
   createMesh() {
@@ -129,13 +134,15 @@ export class Player {
 
     // Sprint con estamina biológica
     let currentSpeed = this.walkSpeed * analogMagnitude;
-    if (input.isSprint() && isMoving && this.stamina > 5) {
+    const isSprinting = input.isSprint() && isMoving && this.stamina > 5;
+    if (isSprinting) {
       currentSpeed = this.sprintSpeed;
       this.stamina = Math.max(0, this.stamina - deltaSeconds * 22);
     } else {
       // Recuperación natural de estamina
       this.stamina = Math.min(this.maxStamina, this.stamina + deltaSeconds * 12);
     }
+    currentSpeed *= (this.speedMultiplier || 1);
 
     if (isMoving) {
       const moveVec = new THREE.Vector3(moveX, 0, moveZ).normalize();
@@ -148,8 +155,8 @@ export class Player {
       this.velocity.x = moveVec.x * currentSpeed;
       this.velocity.z = moveVec.z * currentSpeed;
 
-      // Animación procedimental de paso y brazos
-      const freq = (currentSpeed === this.sprintSpeed ? 14 : 9);
+      // Animación procedimental de paso y brazos proporcional a la velocidad
+      const freq = (isSprinting ? 14 : 9) * (this.speedMultiplier || 1);
       this.walkTime += deltaSeconds * freq;
       const swing = Math.sin(this.walkTime) * 0.65;
 
@@ -160,7 +167,7 @@ export class Player {
 
       // Sonido de pasos
       this.stepAudioTimer += deltaSeconds;
-      const stepInterval = (currentSpeed === this.sprintSpeed ? 0.28 : 0.42);
+      const stepInterval = (isSprinting ? 0.28 : 0.42) / (this.speedMultiplier || 1);
       if (this.stepAudioTimer >= stepInterval) {
         this.stepAudioTimer = 0;
         if (this.isGrounded && this.audioManager) {

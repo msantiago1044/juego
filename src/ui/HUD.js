@@ -13,6 +13,11 @@ export class HUD {
     this.onJumpTap = null;
     this.onGpsCenterTap = null;
     this.onMapToggleTap = null;
+    this.onSpeedChange = null;
+
+    this.currentSpeedMultiplier = 1;
+    this.clockEl = null;
+    this.speedTextEl = null;
 
     this.joystickTouchId = null;
 
@@ -36,8 +41,11 @@ export class HUD {
           </div>
         </div>
         <div class="hud-top-right">
-          <div class="hud-clock-pill">
-            🕐 <span id="hud-clock">08:30</span>
+          <button class="hud-speed-pill" id="btn-toggle-speed" type="button" title="Velocidad del personaje (1x, 2x, 3x)">
+            ⚡ <span id="hud-speed-text">1x Normal</span>
+          </button>
+          <div class="hud-clock-pill" id="hud-clock-pill" title="Hora actual local">
+            🕒 <span id="hud-clock">--:-- --</span>
           </div>
         </div>
       </div>
@@ -91,6 +99,7 @@ export class HUD {
         <div><strong>[Mouse / Touch]</strong> Girar cámara</div>
         <div><strong>[Shift]</strong> Correr</div>
         <div><strong>[Espacio]</strong> Saltar</div>
+        <div><strong>[1/2/3]</strong> Velocidad</div>
         <div><strong>[M]</strong> Ver Mapa</div>
         <div><strong>[C]</strong> Centrar GPS</div>
       </div>
@@ -114,6 +123,22 @@ export class HUD {
     `;
 
     this.container.appendChild(this.hudEl);
+
+    // Elementos reactivos de la barra superior
+    this.clockEl = this.hudEl.querySelector('#hud-clock');
+    this.speedTextEl = this.hudEl.querySelector('#hud-speed-text');
+
+    // Conectar botón de alternancia de velocidad
+    const btnSpeed = this.hudEl.querySelector('#btn-toggle-speed');
+    if (btnSpeed) {
+      const handleSpeedClick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.cycleSpeedMultiplier();
+      };
+      btnSpeed.addEventListener('click', handleSpeedClick);
+      btnSpeed.addEventListener('touchend', handleSpeedClick);
+    }
 
     // Conectar botón de mapa interactivo
     const btnMap = this.hudEl.querySelector('#btn-hud-map');
@@ -427,13 +452,43 @@ export class HUD {
     }
   }
 
+  getSpeedLabel(factor) {
+    if (factor === 2) return '2x Rápido';
+    if (factor === 3) return '3x Turbo';
+    return '1x Normal';
+  }
+
+  setSpeedMultiplier(factor, notify = true, showToast = true) {
+    const valid = (factor === 2 || factor === 3) ? factor : 1;
+    this.currentSpeedMultiplier = valid;
+    const label = this.getSpeedLabel(valid);
+    if (this.speedTextEl) {
+      this.speedTextEl.innerText = label;
+    }
+    if (notify && typeof this.onSpeedChange === 'function') {
+      this.onSpeedChange(valid);
+    }
+    if (showToast) {
+      this.showToast(`⚡ Velocidad: ${label}`);
+    }
+    if (this.game?.audioManager) {
+      this.game.audioManager.playUiClick();
+    }
+  }
+
+  cycleSpeedMultiplier() {
+    let next = 1;
+    if (this.currentSpeedMultiplier === 1) next = 2;
+    else if (this.currentSpeedMultiplier === 2) next = 3;
+    else next = 1;
+    this.setSpeedMultiplier(next, true, true);
+  }
+
   update() {
-    const clock = this.game?.clock;
-    if (clock) {
-      const clockEl = this.hudEl.querySelector('#hud-clock');
-      if (clockEl) {
-        clockEl.innerText = clock.getFormattedTime();
-      }
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    if (this.clockEl) {
+      this.clockEl.innerText = timeStr;
     }
   }
 }

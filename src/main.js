@@ -134,6 +134,11 @@ class GameApp {
         this.mapsApp.toggleMapModal();
       }
     };
+    this.hud.onSpeedChange = (mult) => {
+      if (this.player) {
+        this.player.setSpeedMultiplier(mult);
+      }
+    };
   }
 
   getActiveCityName() {
@@ -198,6 +203,14 @@ class GameApp {
         } else if (this.mapsApp) {
           this.mapsApp.centerPlayerOnRealGps();
         }
+      } else if (e.code === 'Digit1') {
+        if (this.hud) this.hud.setSpeedMultiplier(1);
+      } else if (e.code === 'Digit2') {
+        if (this.hud) this.hud.setSpeedMultiplier(2);
+      } else if (e.code === 'Digit3') {
+        if (this.hud) this.hud.setSpeedMultiplier(3);
+      } else if (e.code === 'KeyV') {
+        if (this.hud) this.hud.cycleSpeedMultiplier();
       }
     });
   }
