@@ -99,6 +99,9 @@ export class GoogleMapsApp {
     this.lastWatchCoords = null;
     this.gpsPendingDelta = { x: 0, z: 0 };
     this.gpsTargetWorldOffset = { x: 0, z: 0 };
+    this.modalOverlay = null;
+
+    this.createMapModal();
     this.autoDetectLocation(false);
     this.startLiveGpsTracking();
   }
@@ -471,7 +474,7 @@ export class GoogleMapsApp {
     const calBtn = document.getElementById('btn-calibrate-gps-pin');
     const calTxt = document.getElementById('btn-calibrate-gps-text');
     if (calBtn) calBtn.classList.remove('active');
-    if (calTxt) calTxt.innerText = 'Calibrar mi punto exacto tocando el mapa';
+    if (calTxt) calTxt.innerText = 'Calibrar';
 
     // Colocar al jugador en el origen (0,0) de la nueva coordenada exacta
     if (this.game && this.game.player) {
@@ -567,7 +570,7 @@ export class GoogleMapsApp {
     const calTxt = document.getElementById('btn-calibrate-gps-text');
     if (calBtn) calBtn.classList.add('active');
     if (calTxt) {
-      calTxt.innerText = '🎯 Toca tu calle o esquina exacta en el mapa...';
+      calTxt.innerText = '🎯 Toca tu calle...';
     }
   }
 
@@ -620,6 +623,12 @@ export class GoogleMapsApp {
     if (cityLabel) {
       const displayLabel = this.streetLabel ? `${this.streetLabel} (${cityName})` : cityName;
       cityLabel.innerHTML = `📍 <span>${displayLabel}</span> ▾`;
+    }
+
+    const modalLocText = document.getElementById('map-modal-location-text');
+    if (modalLocText) {
+      const displayLabel = this.streetLabel ? `${this.streetLabel} (${cityName})` : cityName;
+      modalLocText.innerText = displayLabel;
     }
 
     if (this.map) {
@@ -736,6 +745,303 @@ export class GoogleMapsApp {
         action: 'restPark'
       }
     ];
+  }
+
+  createMapModal() {
+    if (this.modalOverlay) return;
+
+    const parent = this.game?.uiRoot || document.getElementById('ui-root') || document.body;
+    this.modalOverlay = document.createElement('div');
+    this.modalOverlay.id = 'map-modal-overlay';
+    this.modalOverlay.className = 'map-modal-overlay hidden';
+
+    const displayHeader = this.streetLabel ? `${this.streetLabel} (${this.cityName})` : this.cityName;
+
+    this.modalOverlay.innerHTML = `
+      <div class="map-modal-card" id="map-modal-card">
+        <!-- Barra Superior del Modal -->
+        <div class="map-modal-header">
+          <div class="map-modal-header-left">
+            <h2 class="map-modal-title">🗺️ Mapa de tu Cuadra</h2>
+            <div class="map-modal-location-pill" id="map-modal-location-pill" title="Ubicación activa">
+              📍 <span id="map-modal-location-text">${displayHeader}</span>
+            </div>
+          </div>
+          <div class="map-modal-header-actions">
+            <button class="btn-map-action" id="btn-toggle-satellite" type="button" title="Alternar Vista Satélite / Calles">
+              🛰️ <span>Satélite</span>
+            </button>
+            <button class="btn-map-action ${this.isCalibratingGpsPin ? 'active' : ''}" id="btn-calibrate-gps-pin" type="button" title="Calibrar punto tocando el mapa">
+              📌 <span id="btn-calibrate-gps-text">${this.isCalibratingGpsPin ? '🎯 Toca tu calle...' : 'Calibrar'}</span>
+            </button>
+            <button class="btn-close-map-modal" id="btn-close-map-modal" type="button" title="Cerrar Mapa">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <!-- Barra de Búsqueda de Calles Reales, Barrios y Direcciones -->
+        <div class="map-modal-search-bar">
+          <div class="gmaps-input-wrapper">
+            <span class="gmaps-search-icon">🔍</span>
+            <input type="text" id="gmaps-search-input" placeholder="Buscar tu calle, barrio o dirección en ${this.cityName}..." />
+            <button class="gmaps-clear-btn hidden" id="gmaps-clear-btn" type="button">✕</button>
+          </div>
+          <button class="btn-gmaps-search-go" id="btn-search-go" type="button">Buscar</button>
+        </div>
+
+        <!-- Chips de filtros de categorías rápidas -->
+        <div class="gmaps-quick-chips">
+          <button class="chip-btn active" data-filter="all">Todos</button>
+          <button class="chip-btn" data-filter="cafe">☕ Cafeterías</button>
+          <button class="chip-btn" data-filter="gas">⛽ Gasolineras</button>
+          <button class="chip-btn" data-filter="bank">🏦 Bancos</button>
+          <button class="chip-btn" data-filter="restaurant">🍽️ Restaurantes</button>
+          <button class="chip-btn" data-filter="store">🛒 Supermercados</button>
+          <button class="chip-btn" data-filter="park">🌳 Parques</button>
+        </div>
+
+        <!-- Contenedor del Mapa Leaflet -->
+        <div class="map-modal-body">
+          <div id="gmaps-canvas-container" class="gmaps-map-view"></div>
+
+          <!-- Indicador flotante de telemetría y movimiento en tiempo real -->
+          <div class="gmaps-telemetry-badge" id="gmaps-telemetry-badge">
+            <span class="telemetry-live-dot"></span>
+            <span id="gmaps-telemetry-text">Vías Públicas y Espacios Públicos sincronizados</span>
+          </div>
+
+          <!-- Botones flotantes de control de navegación -->
+          <div class="gmaps-floating-controls">
+            <button class="gmaps-fab ${this.followPlayer ? 'active' : ''}" id="btn-follow-player" title="Modo Seguir al Jugador">
+              🧭
+            </button>
+            <button class="gmaps-fab" id="btn-center-player" title="Centrar cámara en el jugador">
+              🎯
+            </button>
+            <button class="gmaps-fab" id="btn-gps-detect" title="Centrar en mi GPS real">
+              📡
+            </button>
+            <button class="gmaps-fab" id="btn-zoom-in" title="Acercar">+</button>
+            <button class="gmaps-fab" id="btn-zoom-out" title="Alejar">−</button>
+          </div>
+
+          <!-- Ficha de Información de Local Seleccionado (Bottom Sheet) -->
+          <div class="gmaps-place-sheet hidden" id="gmaps-place-sheet"></div>
+        </div>
+      </div>
+    `;
+
+    parent.appendChild(this.modalOverlay);
+    this.bindModalEvents(this.modalOverlay);
+
+    setTimeout(() => {
+      this.initMap(this.modalOverlay);
+    }, 60);
+  }
+
+  bindModalEvents(container) {
+    // Cerrar modal con botón X
+    const closeBtn = container.querySelector('#btn-close-map-modal');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeMapModal();
+      });
+    }
+
+    // Cerrar al hacer clic en el backdrop de fondo
+    this.modalOverlay.addEventListener('click', (e) => {
+      if (e.target === this.modalOverlay) {
+        this.closeMapModal();
+      }
+    });
+
+    // Cerrar con Escape
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.modalOverlay && !this.modalOverlay.classList.contains('hidden')) {
+        this.closeMapModal();
+      }
+    });
+
+    // Alternar Satélite / Callejero
+    const satBtn = container.querySelector('#btn-toggle-satellite');
+    if (satBtn) {
+      satBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.toggleSatellite();
+        satBtn.classList.toggle('active', this.isSatellite);
+      });
+    }
+
+    // Botón para activar/desactivar calibración de punto exacto
+    const calibrateBtn = container.querySelector('#btn-calibrate-gps-pin');
+    if (calibrateBtn) {
+      calibrateBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.isCalibratingGpsPin = !this.isCalibratingGpsPin;
+        calibrateBtn.classList.toggle('active', this.isCalibratingGpsPin);
+        const txt = container.querySelector('#btn-calibrate-gps-text');
+        if (txt) {
+          txt.innerText = this.isCalibratingGpsPin
+            ? '🎯 Toca tu calle...'
+            : 'Calibrar';
+        }
+      });
+    }
+
+    // Barra de Búsqueda de Calles Reales, Barrios o Sitios
+    const searchInput = container.querySelector('#gmaps-search-input');
+    const clearBtn = container.querySelector('#gmaps-clear-btn');
+    const searchGoBtn = container.querySelector('#btn-search-go');
+
+    if (searchInput) {
+      const handleFilterInput = () => {
+        const q = searchInput.value.toLowerCase().trim();
+        if (clearBtn) clearBtn.classList.toggle('hidden', q.length === 0);
+        this.filterPlaces(q);
+      };
+
+      const handleSearchGo = async () => {
+        const rawQuery = searchInput.value.trim();
+        if (!rawQuery) return;
+        const qLower = rawQuery.toLowerCase();
+        const localMatch = this.places.find(
+          p => p.name.toLowerCase().includes(qLower) || p.category.toLowerCase().includes(qLower)
+        );
+        if (localMatch) {
+          this.selectPlace(localMatch);
+          return;
+        }
+        const fullQuery = rawQuery.toLowerCase().includes(this.cityName.toLowerCase())
+          ? rawQuery
+          : `${rawQuery}, ${this.cityName}`;
+        await this.searchAndSetCustomCity(fullQuery);
+      };
+
+      searchInput.addEventListener('input', handleFilterInput);
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleSearchGo();
+        }
+      });
+      if (searchGoBtn) {
+        searchGoBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          handleSearchGo();
+        });
+      }
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (searchInput) searchInput.value = '';
+        clearBtn.classList.add('hidden');
+        this.filterPlaces('');
+      });
+    }
+
+    // Chips de categorías
+    container.querySelectorAll('.chip-btn').forEach(chip => {
+      chip.addEventListener('click', (e) => {
+        e.preventDefault();
+        container.querySelectorAll('.chip-btn').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        const filter = chip.getAttribute('data-filter');
+        this.filterPlacesByCategory(filter);
+      });
+    });
+
+    // Centrar en el jugador
+    const centerBtn = container.querySelector('#btn-center-player');
+    if (centerBtn) {
+      centerBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.centerOnPlayer();
+      });
+    }
+
+    // Modo Seguir al Jugador
+    const followBtn = container.querySelector('#btn-follow-player');
+    if (followBtn) {
+      followBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.followPlayer = !this.followPlayer;
+        followBtn.classList.toggle('active', this.followPlayer);
+        if (this.followPlayer) {
+          this.centerOnPlayer();
+        }
+      });
+    }
+
+    // Botón GPS flotante
+    const gpsBtn = container.querySelector('#btn-gps-detect');
+    if (gpsBtn) {
+      gpsBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.centerPlayerOnRealGps();
+      });
+    }
+
+    // Zoom
+    const zoomInBtn = container.querySelector('#btn-zoom-in');
+    if (zoomInBtn) {
+      zoomInBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.map) this.map.zoomIn();
+      });
+    }
+
+    const zoomOutBtn = container.querySelector('#btn-zoom-out');
+    if (zoomOutBtn) {
+      zoomOutBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.map) this.map.zoomOut();
+      });
+    }
+  }
+
+  openMapModal() {
+    if (!this.modalOverlay) {
+      this.createMapModal();
+    }
+    this.modalOverlay.classList.remove('hidden');
+    if (this.game?.audioManager) {
+      this.game.audioManager.playUiClick();
+    }
+    setTimeout(() => {
+      if (this.map) {
+        this.map.invalidateSize();
+      }
+      this.centerOnPlayer();
+    }, 60);
+  }
+
+  closeMapModal() {
+    if (this.modalOverlay) {
+      this.modalOverlay.classList.add('hidden');
+      if (this.game?.audioManager) {
+        this.game.audioManager.playUiClick();
+      }
+    }
+  }
+
+  toggleMapModal() {
+    if (!this.modalOverlay || this.modalOverlay.classList.contains('hidden')) {
+      this.openMapModal();
+    } else {
+      this.closeMapModal();
+    }
   }
 
   render(container) {
@@ -1035,7 +1341,9 @@ export class GoogleMapsApp {
   }
 
   initMap(container) {
-    const mapDiv = container.querySelector('#gmaps-canvas-container');
+    const mapDiv = container
+      ? container.querySelector('#gmaps-canvas-container')
+      : document.getElementById('gmaps-canvas-container');
     if (!mapDiv) return;
 
     if (this.map) {

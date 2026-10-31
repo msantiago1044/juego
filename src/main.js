@@ -92,6 +92,7 @@ class GameApp {
       physicsWorld: this.physicsWorld,
       audioManager: this.audioManager,
       thirdPersonCamera: this.thirdPersonCamera,
+      uiRoot: this.uiRoot,
       mapsApp: null,
       hud: null,
       onCityChanged: (cityName, placeLabel) => this.onCityChanged(cityName, placeLabel)
@@ -126,6 +127,11 @@ class GameApp {
     this.hud.onGpsCenterTap = () => {
       if (this.mapsApp) {
         this.mapsApp.centerPlayerOnRealGps();
+      }
+    };
+    this.hud.onMapToggleTap = () => {
+      if (this.mapsApp) {
+        this.mapsApp.toggleMapModal();
       }
     };
   }
@@ -175,10 +181,21 @@ class GameApp {
   }
 
   bindEvents() {
-    // Tecla 'C' o 'G' también puede centrar en GPS
+    // Teclas de acceso rápido: [M] para abrir mapa, [C]/[G] para centrar GPS
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyC' || e.code === 'KeyG') {
+      // Ignorar si el usuario está escribiendo en un input o campo de texto
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+        return;
+      }
+
+      if (e.code === 'KeyM') {
         if (this.mapsApp) {
+          this.mapsApp.toggleMapModal();
+        }
+      } else if (e.code === 'KeyC' || e.code === 'KeyG') {
+        if (this.hud && typeof this.hud.openGpsConfirmModal === 'function') {
+          this.hud.openGpsConfirmModal();
+        } else if (this.mapsApp) {
           this.mapsApp.centerPlayerOnRealGps();
         }
       }

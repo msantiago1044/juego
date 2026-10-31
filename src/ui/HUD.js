@@ -12,6 +12,7 @@ export class HUD {
     this.onJoystickMove = null;
     this.onJumpTap = null;
     this.onGpsCenterTap = null;
+    this.onMapToggleTap = null;
 
     this.joystickTouchId = null;
 
@@ -76,6 +77,9 @@ export class HUD {
         <button class="btn-hud-action btn-hud-jump" id="btn-hud-jump" type="button" title="Saltar">
           ⬆️ <span>Saltar</span>
         </button>
+        <button class="btn-hud-action btn-hud-map" id="btn-hud-map" type="button" title="Ver Mapa Interactivo">
+          🗺️ <span>Ver Mapa</span>
+        </button>
         <button class="btn-center-gps" id="btn-center-gps" type="button" title="Centrar personaje en tu ubicación GPS real">
           📍 <span>Centrar en mi GPS</span>
         </button>
@@ -87,24 +91,103 @@ export class HUD {
         <div><strong>[Mouse / Touch]</strong> Girar cámara</div>
         <div><strong>[Shift]</strong> Correr</div>
         <div><strong>[Espacio]</strong> Saltar</div>
+        <div><strong>[M]</strong> Ver Mapa</div>
         <div><strong>[C]</strong> Centrar GPS</div>
+      </div>
+
+      <!-- Modal de Confirmación de Centrado GPS -->
+      <div class="gps-confirm-modal hidden" id="gps-confirm-modal">
+        <div class="gps-confirm-card">
+          <div class="gps-confirm-header">
+            <span class="gps-confirm-icon">📍</span>
+            <h3>Centrar en tu ubicación GPS</h3>
+          </div>
+          <p class="gps-confirm-message">
+            ¿Estás seguro de que deseas regresar y centrar tu personaje a tu ubicación GPS real?
+          </p>
+          <div class="gps-confirm-actions">
+            <button class="btn-gps-confirm-no" id="btn-cancel-center-gps" type="button">Cancelar</button>
+            <button class="btn-gps-confirm-yes" id="btn-confirm-center-gps" type="button">Confirmar y Centrar</button>
+          </div>
+        </div>
       </div>
     `;
 
     this.container.appendChild(this.hudEl);
 
-    // Conectar botón principal de centrado en GPS
-    const btnCenterGps = this.hudEl.querySelector('#btn-center-gps');
-    if (btnCenterGps) {
-      const handleGpsCenter = (e) => {
+    // Conectar botón de mapa interactivo
+    const btnMap = this.hudEl.querySelector('#btn-hud-map');
+    if (btnMap) {
+      const handleMapToggle = (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (typeof this.onMapToggleTap === 'function') {
+          this.onMapToggleTap();
+        }
+      };
+      btnMap.addEventListener('click', handleMapToggle);
+      btnMap.addEventListener('touchend', handleMapToggle);
+    }
+
+    // Conectar botón principal de centrado en GPS (abre confirmación)
+    const btnCenterGps = this.hudEl.querySelector('#btn-center-gps');
+    if (btnCenterGps) {
+      const handleGpsCenterClick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openGpsConfirmModal();
+      };
+      btnCenterGps.addEventListener('click', handleGpsCenterClick);
+      btnCenterGps.addEventListener('touchend', handleGpsCenterClick);
+    }
+
+    // Conectar botones del modal de confirmación GPS
+    const modalGpsConfirm = this.hudEl.querySelector('#gps-confirm-modal');
+    const btnConfirmGps = this.hudEl.querySelector('#btn-confirm-center-gps');
+    const btnCancelGps = this.hudEl.querySelector('#btn-cancel-center-gps');
+
+    if (btnConfirmGps) {
+      btnConfirmGps.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeGpsConfirmModal();
         if (typeof this.onGpsCenterTap === 'function') {
           this.onGpsCenterTap();
         }
-      };
-      btnCenterGps.addEventListener('click', handleGpsCenter);
-      btnCenterGps.addEventListener('touchend', handleGpsCenter);
+      });
+    }
+
+    if (btnCancelGps) {
+      btnCancelGps.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeGpsConfirmModal();
+      });
+    }
+
+    if (modalGpsConfirm) {
+      modalGpsConfirm.addEventListener('click', (e) => {
+        if (e.target === modalGpsConfirm) {
+          this.closeGpsConfirmModal();
+        }
+      });
+    }
+  }
+
+  openGpsConfirmModal() {
+    const modal = this.hudEl.querySelector('#gps-confirm-modal');
+    if (modal) {
+      modal.classList.remove('hidden');
+      if (this.game?.audioManager) {
+        this.game.audioManager.playUiClick();
+      }
+    }
+  }
+
+  closeGpsConfirmModal() {
+    const modal = this.hudEl.querySelector('#gps-confirm-modal');
+    if (modal) {
+      modal.classList.add('hidden');
     }
   }
 
