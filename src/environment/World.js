@@ -211,39 +211,13 @@ export class World {
     if (typeof this.onStatusChange === 'function') {
       this.onStatusChange({
         status: 'loading',
-        message: 'Descargando calles reales con OSRM...'
+        message: 'Descargando vías reales de OpenStreetMap...'
       });
     }
 
-    // 3. PASO 1 (Ultrarrápido < 500ms): Consultar OSRM API (routed-foot y routed-car)
-    let osrmResult = null;
+    // 3. PASO 1 (Prioridad Máxima): Geometría Exacta de OpenStreetMap (Overpass en paralelo)
     try {
-      osrmResult = await this.fetchOSRMStreets(lat, lng, signal);
-      if (signal.aborted) return;
-      if (osrmResult && Array.isArray(osrmResult.waypoints) && osrmResult.waypoints.length > 0) {
-        try {
-          sessionStorage.setItem(osrmCacheKey, JSON.stringify(osrmResult));
-        } catch (e) {}
-
-        this.lastLoadedCoordKey = coordKey;
-        const stats = this.buildFromOSRMData(osrmResult, lat, lng, this.movementScale);
-        if (typeof this.onStatusChange === 'function') {
-          this.onStatusChange({
-            status: 'success',
-            message: `Calles reales cargadas (${stats.roadCount} vías: ${stats.sampleNames.join(', ') || 'Barrio Real'})`
-          });
-        }
-        if (typeof this.onWorldGeometryReady === 'function') {
-          this.onWorldGeometryReady({ source: 'osrm', lat, lng, stats });
-        }
-      }
-    } catch (err) {
-      // Continuar con Overpass si OSRM encuentra error
-    }
-
-    // 4. PASO 2: Consultar Overpass con timeout de 4 segundos para geometrías poligonales completas
-    try {
-      const osmData = await this.fetchOverpassWithTimeout(lat, lng, 4000, signal);
+      const osmData = await this.fetchOverpassInParallel(lat, lng, 3500, signal);
       if (signal.aborted) return;
       if (
         osmData &&
@@ -259,22 +233,85 @@ export class World {
         if (typeof this.onStatusChange === 'function') {
           this.onStatusChange({
             status: 'success',
-            message: `Calles reales completas cargadas (${stats.roadCount} vías, ${stats.parkCount} espacios públicos)`
+            message: `Calles reales exactas cargadas (${stats.roadCount} vías de tu barrio)`
           });
         }
         if (typeof this.onWorldGeometryReady === 'function') {
           this.onWorldGeometryReady({ source: 'osm', lat, lng, stats });
         }
+        return;
       }
     } catch (err) {
-      if (!osrmResult || !osrmResult.waypoints || osrmResult.waypoints.length === 0) {
+      // Continuar con OSRM si Overpass no está disponible
+    }
+
+    // 4. PASO 2: Respaldo Rápido con OSRM
+    try {
+      const osrmResult = await this.fetchOSRMStreets(lat, lng, signal);
+      if (signal.aborted) return;
+      if (osrmResult && Array.isArray(osrmResult.waypoints) && osrmResult.waypoints.length > 0) {
+        try {
+          sessionStorage.setItem(osrmCacheKey, JSON.stringify(osrmResult));
+        } catch (e) {}
+
+        this.lastLoadedCoordKey = coordKey;
+        const stats = this.buildFromOSRMData(osrmResult, lat, lng, this.movementScale);
         if (typeof this.onStatusChange === 'function') {
           this.onStatusChange({
-            status: 'warning',
-            message: 'Servidores OSM ocupados; red local de la zona activa'
+            status: 'success',
+            message: `Calles cargadas vía OSRM (${stats.roadCount} vías de tu zona)`
           });
         }
+        if (typeof this.onWorldGeometryReady === 'function') {
+          this.onWorldGeometryReady({ source: 'osrm', lat, lng, stats });
+        }
+        return;
       }
+    } catch (err) {
+      if (typeof this.onStatusChange === 'function') {
+        this.onStatusChange({
+          status: 'warning',
+          message: 'Red local activa en tu ubicación actual'
+        });
+      }
+    }
+  }
+
+  async fetchOverpassInParallel(lat, lng, timeoutMs = 3500, signal = null) {
+    const query = `[out:json][timeout:6];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|living_street|pedestrian|footway)$"](around:420,${lat},${lng});way["leisure"="park"](around:320,${lat},${lng}););out geom;`;
+    const encoded = encodeURIComponent(query);
+    const endpoints = [
+      `https://overpass-api.de/api/interpreter?data=${encoded}`,
+      `https://overpass.kumi.systems/api/interpreter?data=${encoded}`,
+      `https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=${encoded}`
+    ];
+
+    const fetchSingle = async (url) => {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+      const onAbort = () => ctrl.abort();
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        const res = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(tid);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        if (res.ok) {
+          const json = await res.json();
+          if (json && Array.isArray(json.elements) && json.elements.length > 0) {
+            return json;
+          }
+        }
+      } catch (e) {
+        clearTimeout(tid);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      }
+      throw new Error('Overpass endpoint falló o demoró');
+    };
+
+    try {
+      return await Promise.any(endpoints.map(fetchSingle));
+    } catch (e) {
+      return null;
     }
   }
 
@@ -341,42 +378,6 @@ export class World {
     return { waypoints };
   }
 
-  async fetchOverpassWithTimeout(lat, lng, timeoutMs = 4000, signal = null) {
-    const query = `[out:json][timeout:5];(way["highway"](around:350,${lat},${lng});way["leisure"="park"](around:350,${lat},${lng});way["landuse"~"grass|village_green"](around:350,${lat},${lng}););out geom;`;
-    const encoded = encodeURIComponent(query);
-    const endpoints = [
-      `https://overpass-api.de/api/interpreter?data=${encoded}`,
-      `https://overpass.kumi.systems/api/interpreter?data=${encoded}`,
-      `https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=${encoded}`
-    ];
-
-    for (const url of endpoints) {
-      if (signal && signal.aborted) return null;
-      try {
-        const timeoutController = new AbortController();
-        const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-        const combinedAbort = () => timeoutController.abort();
-        if (signal) signal.addEventListener('abort', combinedAbort, { once: true });
-
-        const res = await fetch(url, {
-          method: 'GET',
-          signal: timeoutController.signal
-        });
-        clearTimeout(timeoutId);
-        if (signal) signal.removeEventListener('abort', combinedAbort);
-
-        if (res.ok) {
-          const json = await res.json();
-          if (json && Array.isArray(json.elements) && json.elements.length > 0) {
-            return json;
-          }
-        }
-      } catch (err) {
-        // Intentar siguiente espejo Overpass
-      }
-    }
-    return null;
-  }
 
   buildFromOSRMData(osrmData, baseLat, baseLng, scale) {
     this.clearDynamicWorld();
@@ -507,19 +508,8 @@ export class World {
       }
     }
 
-    // 2. Conectar esquinas e intersecciones reales entre calles que se cruzan
-    for (let i = 0; i < waypoints.length; i++) {
-      const p1 = waypoints[i];
-      for (let j = i + 1; j < waypoints.length; j++) {
-        const p2 = waypoints[j];
-        if (p1.name !== p2.name) {
-          const dist = Math.hypot(p2.x - p1.x, p2.z - p1.z);
-          if (dist > 1.0 && dist <= 38.0) {
-            addSegment(p1, p2, 5.2, `${p1.name} / ${p2.name}`, false);
-          }
-        }
-      }
-    }
+    // 2. Limpieza: NO conectar puntos arbitrarios entre calles para evitar telarañas diagonales y solapamientos
+    // Las intersecciones se forman naturalmente cuando los trazados de las calles se cruzan en el espacio 3D.
 
     // 3. Garantizar que el origen (0,0) esté conectado a la vía más cercana
     const originWalk = this.getNearestWalkablePoint(0, 0);
@@ -825,8 +815,8 @@ export class World {
     sidewalkMesh.receiveShadow = true;
     this.dynamicWorldGroup.add(sidewalkMesh);
 
-    // Calzada principal
-    const roadColor = isPedestrian ? 0xd4b483 : 0x262b33;
+    // Asfalto limpio y nítido (sin fideos de líneas amarillas repetitivas para máxima claridad visual)
+    const roadColor = isPedestrian ? 0xd4b483 : 0x22262e;
     const roadMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(width, length + 0.4),
       new THREE.MeshLambertMaterial({ color: roadColor })
@@ -837,23 +827,6 @@ export class World {
     roadMesh.position.set(midX, 0.025, midZ);
     roadMesh.receiveShadow = true;
     this.dynamicWorldGroup.add(roadMesh);
-
-    // Línea central amarilla para calles vehiculares
-    if (!isPedestrian && length > 7) {
-      const dashMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
-      const steps = Math.floor(length / 7);
-      for (let i = 1; i < steps; i++) {
-        const t = i / steps;
-        const lx = ax + dx * t;
-        const lz = az + dz * t;
-        const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 2.6), dashMat);
-        dash.rotation.order = 'YXZ';
-        dash.rotation.y = angle;
-        dash.rotation.x = -Math.PI / 2;
-        dash.position.set(lx, 0.034, lz);
-        this.dynamicWorldGroup.add(dash);
-      }
-    }
   }
 
   createRoadNodeCap(x, z, width, isPedestrian = false) {
@@ -1298,17 +1271,17 @@ export class World {
     const baseLat = Number.isFinite(lat) ? lat : this.baseCoords.lat;
     const baseLng = Number.isFinite(lng) ? lng : this.baseCoords.lng;
 
-    // Calles reales de la zona
-    const street1 = 'Carrera 10';
-    const street2 = 'Calle 8';
-    const street3 = 'Calle 9';
-    const street4 = 'Carrera 9';
-    const street5 = 'Calle 7';
+    // Calles limpias de cuadrícula local alrededor del punto GPS actual
+    const street1 = 'Vía Principal Norte-Sur';
+    const street2 = 'Calle Transversal 1';
+    const street3 = 'Calle Transversal 2';
+    const street4 = 'Avenida Este';
+    const street5 = 'Calle Transversal 3';
 
-    // Generar red de calles con coordenadas reales calculadas alrededor de (baseLat, baseLng)
-    this.addRoadSegment(0, -90, 0, 90, 6.2, street1, 'primary', false);
-    this.addRoadSegment(-90, -35, 90, -35, 5.8, street2, 'secondary', false);
-    this.addRoadSegment(-90, 5, 90, 5, 5.8, street3, 'secondary', false);
+    // Generar red de calles limpia con coordenadas reales calculadas alrededor de (baseLat, baseLng)
+    this.addRoadSegment(0, -90, 0, 90, 6.0, street1, 'primary', false);
+    this.addRoadSegment(-90, -35, 90, -35, 5.5, street2, 'secondary', false);
+    this.addRoadSegment(-90, 5, 90, 5, 5.5, street3, 'secondary', false);
     this.addRoadSegment(-90, 45, 90, 45, 5.2, street5, 'residential', false);
     this.addRoadSegment(45, -90, 45, 90, 5.6, street4, 'residential', false);
 
@@ -1327,13 +1300,11 @@ export class World {
       { x: 14, z: 26 },
       { x: -12, z: 26 }
     ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z, baseLat, baseLng, this.movementScale) }));
-    this.addPublicPolygonSpace(plazaPts, { xMin: -12, xMax: 14, zMin: 10, zMax: 26 }, 'Plaza de Origen');
+    this.addPublicPolygonSpace(plazaPts, { xMin: -12, xMax: 14, zMin: 10, zMax: 26 }, 'Plazoleta Central');
 
-    this.createDistrictsAndBuildings();
-    this.createNatureAndVegetation();
-    this.createTallGrassRoutes();
-    this.createStreetFurniture();
-    this.setupInteractiveSpots();
+    // Construir casitas suburbanas ligeras a los lados de las calles y farolas limpias (sin bloat de economía)
+    this.renderSuburbanBlocks();
+    this.populateAlongRealStreets();
   }
 
   createPokemonHouse(x, z, width, depth, height, wallHex, roofHex, label = '') {
