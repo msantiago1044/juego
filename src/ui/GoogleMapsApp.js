@@ -768,6 +768,9 @@ export class GoogleMapsApp {
             </div>
           </div>
           <div class="map-modal-header-actions">
+            <button class="btn-map-action btn-map-gps" id="btn-map-center-gps" type="button" title="Centrar personaje en tu ubicación GPS real">
+              📍 <span>Centrar en mi GPS</span>
+            </button>
             <button class="btn-map-action" id="btn-toggle-satellite" type="button" title="Alternar Vista Satélite / Calles">
               🛰️ <span>Satélite</span>
             </button>
@@ -777,6 +780,23 @@ export class GoogleMapsApp {
             <button class="btn-close-map-modal" id="btn-close-map-modal" type="button" title="Cerrar Mapa">
               ✕
             </button>
+          </div>
+        </div>
+
+        <!-- Modal de Confirmación de Centrado GPS dentro del Mapa -->
+        <div class="gps-confirm-modal hidden" id="map-gps-confirm-modal">
+          <div class="gps-confirm-card">
+            <div class="gps-confirm-header">
+              <span class="gps-confirm-icon">📍</span>
+              <h3>Centrar en tu ubicación GPS</h3>
+            </div>
+            <p class="gps-confirm-message">
+              ¿Estás seguro de que deseas centrar tu personaje en tu ubicación GPS real?
+            </p>
+            <div class="gps-confirm-actions">
+              <button class="btn-gps-confirm-no" id="btn-map-cancel-center-gps" type="button">Cancelar</button>
+              <button class="btn-gps-confirm-yes" id="btn-map-confirm-center-gps" type="button">Confirmar y Centrar</button>
+            </div>
           </div>
         </div>
 
@@ -981,13 +1001,68 @@ export class GoogleMapsApp {
       });
     }
 
+    // Botón GPS en cabecera y modal de confirmación
+    const btnMapCenterGps = container.querySelector('#btn-map-center-gps');
+    const modalGpsConfirm = container.querySelector('#map-gps-confirm-modal');
+    const btnConfirmGps = container.querySelector('#btn-map-confirm-center-gps');
+    const btnCancelGps = container.querySelector('#btn-map-cancel-center-gps');
+
+    const openGpsConfirm = () => {
+      if (modalGpsConfirm) {
+        modalGpsConfirm.classList.remove('hidden');
+        if (this.game?.audioManager) {
+          this.game.audioManager.playUiClick();
+        }
+      }
+    };
+
+    const closeGpsConfirm = () => {
+      if (modalGpsConfirm) {
+        modalGpsConfirm.classList.add('hidden');
+      }
+    };
+
+    if (btnMapCenterGps) {
+      btnMapCenterGps.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openGpsConfirm();
+      });
+    }
+
+    if (btnCancelGps) {
+      btnCancelGps.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeGpsConfirm();
+      });
+    }
+
+    if (btnConfirmGps) {
+      btnConfirmGps.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeGpsConfirm();
+        this.centerPlayerOnRealGps();
+        this.closeMapModal();
+      });
+    }
+
+    if (modalGpsConfirm) {
+      modalGpsConfirm.addEventListener('click', (e) => {
+        if (e.target === modalGpsConfirm) {
+          closeGpsConfirm();
+        }
+      });
+    }
+
     // Botón GPS flotante
     const gpsBtn = container.querySelector('#btn-gps-detect');
     if (gpsBtn) {
       gpsBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.centerPlayerOnRealGps();
+        openGpsConfirm();
       });
     }
 
@@ -1008,6 +1083,17 @@ export class GoogleMapsApp {
         e.stopPropagation();
         if (this.map) this.map.zoomOut();
       });
+    }
+  }
+
+  openGpsConfirmModal() {
+    this.openMapModal();
+    const modalGpsConfirm = this.modalOverlay?.querySelector('#map-gps-confirm-modal');
+    if (modalGpsConfirm) {
+      modalGpsConfirm.classList.remove('hidden');
+      if (this.game?.audioManager) {
+        this.game.audioManager.playUiClick();
+      }
     }
   }
 
@@ -1417,23 +1503,6 @@ export class GoogleMapsApp {
           fillOpacity: 0.22,
           weight: 1.5
         }).addTo(this.walkableLayerGroup);
-      }
-    }
-
-    // Dibujar red de vías públicas transitables en azul cian sutil
-    for (const seg of world.roadSegments) {
-      if (Number.isFinite(seg.aLat) && Number.isFinite(seg.bLat)) {
-        L.polyline(
-          [
-            [seg.aLat, seg.aLng],
-            [seg.bLat, seg.bLng]
-          ],
-          {
-            color: seg.isPedestrian ? '#f59e0b' : '#00d4ff',
-            weight: seg.width >= 6 ? 5 : 3.5,
-            opacity: 0.42
-          }
-        ).addTo(this.walkableLayerGroup);
       }
     }
   }

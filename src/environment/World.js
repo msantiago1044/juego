@@ -149,6 +149,7 @@ export class World {
     this.movementScale = movementScale || 2.8;
 
     const cacheKey = `osm_cache_${lat.toFixed(4)}_${lng.toFixed(4)}`;
+    const osrmCacheKey = `osrm_cache_${lat.toFixed(4)}_${lng.toFixed(4)}`;
     const coordKey = `${lat.toFixed(4)}_${lng.toFixed(4)}`;
 
     if (this.osmAbortController) {
@@ -157,11 +158,11 @@ export class World {
     this.osmAbortController = new AbortController();
     const signal = this.osmAbortController.signal;
 
-    // 1. Revisar caché local en sessionStorage para carga inmediata con latencia de 0ms
+    // 1. Revisar caché local en sessionStorage para carga inmediata de 0ms
     try {
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        const osmData = JSON.parse(cached);
+      const cachedOsm = sessionStorage.getItem(cacheKey);
+      if (cachedOsm) {
+        const osmData = JSON.parse(cachedOsm);
         if (osmData && Array.isArray(osmData.elements) && osmData.elements.length > 0) {
           this.lastLoadedCoordKey = coordKey;
           const stats = this.buildFromOSMData(osmData, lat, lng, this.movementScale);
@@ -177,27 +178,171 @@ export class World {
           return;
         }
       }
+
+      const cachedOsrm = sessionStorage.getItem(osrmCacheKey);
+      if (cachedOsrm) {
+        const osrmData = JSON.parse(cachedOsrm);
+        if (osrmData && Array.isArray(osrmData.waypoints) && osrmData.waypoints.length > 0) {
+          this.lastLoadedCoordKey = coordKey;
+          const stats = this.buildFromOSRMData(osrmData, lat, lng, this.movementScale);
+          if (typeof this.onStatusChange === 'function') {
+            this.onStatusChange({
+              status: 'success',
+              message: `Calles reales cargadas vía OSRM (${stats.roadCount} vías reales)`
+            });
+          }
+          if (typeof this.onWorldGeometryReady === 'function') {
+            this.onWorldGeometryReady({ source: 'osrm_cache', lat, lng, stats });
+          }
+          return;
+        }
+      }
     } catch (e) {
-      // Ignorar errores de lectura en caché
+      // Ignorar errores de caché
     }
 
-    // 2. Construir red inmediata de respaldo para que el jugador pueda caminar al instante sin bloqueo
+    // 2. Construir red inicial inmediata alrededor de (lat, lng) para movimiento instantáneo
     this.clearDynamicWorld();
-    this.buildFallbackNeighborhood();
+    this.buildFallbackNeighborhood(lat, lng);
     if (typeof this.onWorldGeometryReady === 'function') {
       this.onWorldGeometryReady({ source: 'fallback', lat, lng });
     }
 
-    // Notificar al HUD que se están descargando las calles reales
     if (typeof this.onStatusChange === 'function') {
       this.onStatusChange({
         status: 'loading',
-        message: 'Descargando calles reales...'
+        message: 'Descargando calles reales con OSRM...'
       });
     }
 
-    // 3. Consultar OpenStreetMap Overpass API ultrarrápido con out geom para calles y parques
-    const query = `[out:json][timeout:15];(way["highway"](around:350,${lat},${lng});way["leisure"="park"](around:350,${lat},${lng});way["landuse"~"grass|village_green"](around:350,${lat},${lng}););out geom;`;
+    // 3. PASO 1 (Ultrarrápido < 500ms): Consultar OSRM API (routed-foot y routed-car)
+    let osrmResult = null;
+    try {
+      osrmResult = await this.fetchOSRMStreets(lat, lng, signal);
+      if (signal.aborted) return;
+      if (osrmResult && Array.isArray(osrmResult.waypoints) && osrmResult.waypoints.length > 0) {
+        try {
+          sessionStorage.setItem(osrmCacheKey, JSON.stringify(osrmResult));
+        } catch (e) {}
+
+        this.lastLoadedCoordKey = coordKey;
+        const stats = this.buildFromOSRMData(osrmResult, lat, lng, this.movementScale);
+        if (typeof this.onStatusChange === 'function') {
+          this.onStatusChange({
+            status: 'success',
+            message: `Calles reales cargadas (${stats.roadCount} vías: ${stats.sampleNames.join(', ') || 'Barrio Real'})`
+          });
+        }
+        if (typeof this.onWorldGeometryReady === 'function') {
+          this.onWorldGeometryReady({ source: 'osrm', lat, lng, stats });
+        }
+      }
+    } catch (err) {
+      // Continuar con Overpass si OSRM encuentra error
+    }
+
+    // 4. PASO 2: Consultar Overpass con timeout de 4 segundos para geometrías poligonales completas
+    try {
+      const osmData = await this.fetchOverpassWithTimeout(lat, lng, 4000, signal);
+      if (signal.aborted) return;
+      if (
+        osmData &&
+        Array.isArray(osmData.elements) &&
+        osmData.elements.some(el => el.type === 'way' && el.tags && el.tags.highway)
+      ) {
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify(osmData));
+        } catch (e) {}
+
+        this.lastLoadedCoordKey = coordKey;
+        const stats = this.buildFromOSMData(osmData, lat, lng, this.movementScale);
+        if (typeof this.onStatusChange === 'function') {
+          this.onStatusChange({
+            status: 'success',
+            message: `Calles reales completas cargadas (${stats.roadCount} vías, ${stats.parkCount} espacios públicos)`
+          });
+        }
+        if (typeof this.onWorldGeometryReady === 'function') {
+          this.onWorldGeometryReady({ source: 'osm', lat, lng, stats });
+        }
+      }
+    } catch (err) {
+      if (!osrmResult || !osrmResult.waypoints || osrmResult.waypoints.length === 0) {
+        if (typeof this.onStatusChange === 'function') {
+          this.onStatusChange({
+            status: 'warning',
+            message: 'Servidores OSM ocupados; red local de la zona activa'
+          });
+        }
+      }
+    }
+  }
+
+  async fetchOSRMStreets(lat, lng, signal) {
+    const footUrl = `https://routing.openstreetmap.de/routed-foot/nearest/v1/foot/${lng},${lat}?number=50`;
+    const carUrl = `https://routing.openstreetmap.de/routed-car/nearest/v1/driving/${lng},${lat}?number=50`;
+
+    const fetchEndpoint = async (url, timeoutMs = 2800) => {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), timeoutMs);
+      const onAbort = () => ctrl.abort();
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        const res = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(tid);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        if (res.ok) {
+          return await res.json();
+        }
+      } catch (e) {
+        clearTimeout(tid);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      }
+      return null;
+    };
+
+    const [footRes, carRes] = await Promise.allSettled([
+      fetchEndpoint(footUrl, 2800),
+      fetchEndpoint(carUrl, 2800)
+    ]);
+
+    const waypoints = [];
+    const seenCoords = new Set();
+
+    const addWaypoints = (data, isVehicle = false) => {
+      if (data && Array.isArray(data.waypoints)) {
+        for (const wp of data.waypoints) {
+          if (!wp.location || wp.location.length < 2) continue;
+          const wLng = wp.location[0];
+          const wLat = wp.location[1];
+          const locKey = `${wLat.toFixed(5)},${wLng.toFixed(5)}`;
+          if (!seenCoords.has(locKey)) {
+            seenCoords.add(locKey);
+            waypoints.push({
+              lat: wLat,
+              lng: wLng,
+              name: (wp.name || '').trim(),
+              distance: wp.distance || 0,
+              nodes: wp.nodes || [],
+              isVehicle
+            });
+          }
+        }
+      }
+    };
+
+    if (footRes.status === 'fulfilled' && footRes.value) {
+      addWaypoints(footRes.value, false);
+    }
+    if (carRes.status === 'fulfilled' && carRes.value) {
+      addWaypoints(carRes.value, true);
+    }
+
+    return { waypoints };
+  }
+
+  async fetchOverpassWithTimeout(lat, lng, timeoutMs = 4000, signal = null) {
+    const query = `[out:json][timeout:5];(way["highway"](around:350,${lat},${lng});way["leisure"="park"](around:350,${lat},${lng});way["landuse"~"grass|village_green"](around:350,${lat},${lng}););out geom;`;
     const encoded = encodeURIComponent(query);
     const endpoints = [
       `https://overpass-api.de/api/interpreter?data=${encoded}`,
@@ -205,78 +350,216 @@ export class World {
       `https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=${encoded}`
     ];
 
-    let osmData = null;
     for (const url of endpoints) {
-      if (signal.aborted) return;
+      if (signal && signal.aborted) return null;
       try {
         const timeoutController = new AbortController();
-        const timeoutId = setTimeout(() => timeoutController.abort(), 7000);
+        const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
         const combinedAbort = () => timeoutController.abort();
-        signal.addEventListener('abort', combinedAbort, { once: true });
+        if (signal) signal.addEventListener('abort', combinedAbort, { once: true });
 
         const res = await fetch(url, {
           method: 'GET',
           signal: timeoutController.signal
         });
         clearTimeout(timeoutId);
-        signal.removeEventListener('abort', combinedAbort);
+        if (signal) signal.removeEventListener('abort', combinedAbort);
 
         if (res.ok) {
           const json = await res.json();
           if (json && Array.isArray(json.elements) && json.elements.length > 0) {
-            osmData = json;
-            break;
+            return json;
           }
         }
       } catch (err) {
-        if (signal.aborted) return;
         // Intentar siguiente espejo Overpass
       }
     }
+    return null;
+  }
 
-    if (signal.aborted) return;
+  buildFromOSRMData(osrmData, baseLat, baseLng, scale) {
+    this.clearDynamicWorld();
 
-    if (!osmData || !Array.isArray(osmData.elements) || osmData.elements.length === 0) {
-      if (typeof this.onStatusChange === 'function') {
-        this.onStatusChange({
-          status: 'warning',
-          message: 'Servidores OSM ocupados; usando red de respaldo mientras reintenta...'
-        });
-      }
-      return;
+    const rawWaypoints = osrmData.waypoints || [];
+    if (rawWaypoints.length === 0) {
+      return { roadCount: 0, parkCount: 0, sampleNames: [] };
     }
 
-    const hasHighways = osmData.elements.some(el => el.type === 'way' && el.tags && el.tags.highway);
-    if (!hasHighways) {
-      if (typeof this.onStatusChange === 'function') {
-        this.onStatusChange({
-          status: 'warning',
-          message: 'No se encontraron vías públicas en el radio consultado.'
-        });
-      }
-      return;
-    }
+    const waypoints = [];
+    const nameSet = new Set();
 
-    // Guardar en sessionStorage para próximas visitas instantáneas con 0ms de latencia
-    try {
-      sessionStorage.setItem(cacheKey, JSON.stringify(osmData));
-    } catch (e) {
-      // Cuota excedida de sessionStorage o modo incógnito
-    }
-
-    this.lastLoadedCoordKey = coordKey;
-    const stats = this.buildFromOSMData(osmData, lat, lng, this.movementScale);
-
-    if (typeof this.onStatusChange === 'function') {
-      this.onStatusChange({
-        status: 'success',
-        message: `Calles reales cargadas (${stats.roadCount} vías, ${stats.parkCount} espacios públicos)`
+    for (const wp of rawWaypoints) {
+      const w = this.latLngToWorld(wp.lat, wp.lng, baseLat, baseLng, scale);
+      if (Math.hypot(w.x, w.z) > 280) continue;
+      const cleanName = (wp.name || '').trim();
+      if (cleanName) nameSet.add(cleanName);
+      waypoints.push({
+        lat: wp.lat,
+        lng: wp.lng,
+        x: w.x,
+        z: w.z,
+        name: cleanName || 'Calle Pública',
+        isVehicle: Boolean(wp.isVehicle)
       });
     }
 
-    if (typeof this.onWorldGeometryReady === 'function') {
-      this.onWorldGeometryReady({ source: 'osm', lat, lng, stats });
+    if (waypoints.length === 0) {
+      return { roadCount: 0, parkCount: 0, sampleNames: [] };
     }
+
+    // Agrupar waypoints por nombre de calle real
+    const streetMap = new Map();
+    for (const wp of waypoints) {
+      if (!streetMap.has(wp.name)) {
+        streetMap.set(wp.name, []);
+      }
+      streetMap.get(wp.name).push(wp);
+    }
+
+    const vertexSet = new Set();
+    const createdSegments = [];
+
+    const addSegment = (a, b, width, name, isPedestrian = false) => {
+      const segLen = Math.hypot(b.x - a.x, b.z - a.z);
+      if (segLen < 0.4 || segLen > 180) return;
+
+      const segKey = `${Math.round(a.x)},${Math.round(a.z)}_${Math.round(b.x)},${Math.round(b.z)}`;
+      const revKey = `${Math.round(b.x)},${Math.round(b.z)}_${Math.round(a.x)},${Math.round(a.z)}`;
+      if (createdSegments.includes(segKey) || createdSegments.includes(revKey)) return;
+      createdSegments.push(segKey);
+
+      this.addRoadSegment(
+        a.x,
+        a.z,
+        b.x,
+        b.z,
+        width,
+        name,
+        isPedestrian ? 'footway' : 'residential',
+        isPedestrian,
+        a.lat,
+        a.lng,
+        b.lat,
+        b.lng
+      );
+
+      const keyA = `${Math.round(a.x * 2)},${Math.round(a.z * 2)}`;
+      if (!vertexSet.has(keyA)) {
+        vertexSet.add(keyA);
+        this.createRoadNodeCap(a.x, a.z, width, isPedestrian);
+      }
+      const keyB = `${Math.round(b.x * 2)},${Math.round(b.z * 2)}`;
+      if (!vertexSet.has(keyB)) {
+        vertexSet.add(keyB);
+        this.createRoadNodeCap(b.x, b.z, width, isPedestrian);
+      }
+    };
+
+    // 1. Trazar segmentos conectando los waypoints de cada calle
+    for (const [name, pts] of streetMap.entries()) {
+      const isCarrera = /carrera|cra|cr\b/i.test(name);
+      const isAvenida = /avenida|av\b/i.test(name);
+      const isPedestrian = /peatonal|sendero|pasaje/i.test(name);
+      const width = isAvenida ? 6.5 : (isCarrera ? 5.8 : 5.2);
+
+      if (pts.length >= 2) {
+        let maxDist = 0;
+        let startPt = pts[0];
+        let endPt = pts[1];
+        for (let i = 0; i < pts.length; i++) {
+          for (let j = i + 1; j < pts.length; j++) {
+            const d = Math.hypot(pts[j].x - pts[i].x, pts[j].z - pts[i].z);
+            if (d > maxDist) {
+              maxDist = d;
+              startPt = pts[i];
+              endPt = pts[j];
+            }
+          }
+        }
+
+        const dirX = endPt.x - startPt.x;
+        const dirZ = endPt.z - startPt.z;
+        const dirLen = Math.hypot(dirX, dirZ) || 1;
+        const uX = dirX / dirLen;
+        const uZ = dirZ / dirLen;
+
+        pts.sort((p1, p2) => {
+          const t1 = (p1.x - startPt.x) * uX + (p1.z - startPt.z) * uZ;
+          const t2 = (p2.x - startPt.x) * uX + (p2.z - startPt.z) * uZ;
+          return t1 - t2;
+        });
+
+        for (let i = 0; i < pts.length - 1; i++) {
+          addSegment(pts[i], pts[i + 1], width, name, isPedestrian);
+        }
+      } else if (pts.length === 1) {
+        const p = pts[0];
+        const isNorthSouth = isCarrera || Math.abs(p.x) > Math.abs(p.z);
+        const halfLen = 22;
+        const aX = isNorthSouth ? p.x : p.x - halfLen;
+        const aZ = isNorthSouth ? p.z - halfLen : p.z;
+        const bX = isNorthSouth ? p.x : p.x + halfLen;
+        const bZ = isNorthSouth ? p.z + halfLen : p.z;
+        const ptA = { x: aX, z: aZ, ...this.worldToLatLng(aX, aZ, baseLat, baseLng, scale) };
+        const ptB = { x: bX, z: bZ, ...this.worldToLatLng(bX, bZ, baseLat, baseLng, scale) };
+        addSegment(ptA, ptB, width, name, isPedestrian);
+      }
+    }
+
+    // 2. Conectar esquinas e intersecciones reales entre calles que se cruzan
+    for (let i = 0; i < waypoints.length; i++) {
+      const p1 = waypoints[i];
+      for (let j = i + 1; j < waypoints.length; j++) {
+        const p2 = waypoints[j];
+        if (p1.name !== p2.name) {
+          const dist = Math.hypot(p2.x - p1.x, p2.z - p1.z);
+          if (dist > 1.0 && dist <= 38.0) {
+            addSegment(p1, p2, 5.2, `${p1.name} / ${p2.name}`, false);
+          }
+        }
+      }
+    }
+
+    // 3. Garantizar que el origen (0,0) esté conectado a la vía más cercana
+    const originWalk = this.getNearestWalkablePoint(0, 0);
+    const distToOrigin = Math.hypot(originWalk.x, originWalk.z);
+    if (distToOrigin > 1.5) {
+      const pOrig = { x: 0, z: 0, lat: baseLat, lng: baseLng };
+      const pSnap = {
+        x: originWalk.x,
+        z: originWalk.z,
+        ...this.worldToLatLng(originWalk.x, originWalk.z, baseLat, baseLng, scale)
+      };
+      addSegment(pOrig, pSnap, 4.5, 'Acceso Peatonal Principal', true);
+    }
+
+    this.addPublicCircleSpace(originWalk.x, originWalk.z, 6.5, 'Plazoleta de Acceso', true);
+
+    // 4. Añadir parque público vecino si no hay espacios públicos registrados
+    const parkAnchor = this.getNearestWalkablePoint(24, 18);
+    const px = parkAnchor.x + 12;
+    const pz = parkAnchor.z + 10;
+    const parkPts = [
+      { x: px - 14, z: pz - 12 },
+      { x: px + 14, z: pz - 12 },
+      { x: px + 14, z: pz + 12 },
+      { x: px - 14, z: pz + 12 }
+    ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z, baseLat, baseLng, scale) }));
+    this.addPublicPolygonSpace(parkPts, { xMin: px - 14, xMax: px + 14, zMin: pz - 12, zMax: pz + 12 }, 'Parque Vecinal');
+    this.addRoadSegment(parkAnchor.x, parkAnchor.z, px, pz, 4.0, 'Sendero al Parque', 'footway', true);
+
+    // 5. Edificios suburbanos y farolas a lo largo de las vías
+    this.renderSuburbanBlocks();
+    this.populateAlongRealStreets();
+
+    const sampleNames = Array.from(nameSet).slice(0, 4);
+
+    return {
+      roadCount: this.roadSegments.length,
+      parkCount: this.publicSpaces.length,
+      sampleNames
+    };
   }
 
   buildFromOSMData(osmData, baseLat, baseLng, scale) {
@@ -1007,35 +1290,44 @@ export class World {
   }
 
   // ===========================================================================
-  // RED VIAL Y PARQUES DE RESPALDO INMEDIATO (MIENTRAS CARGA OVERPASS O SIN RED)
+  // RED VIAL Y PARQUES DE RESPALDO (CONSTRUIDA CON COORDENADAS REALES)
   // ===========================================================================
-  buildFallbackNeighborhood() {
-    // Registrar vías públicas de respaldo (coinciden exactamente con las avenidas y senderos)
-    this.addRoadSegment(0, -118, 0, 88, 7.5, 'Carrera Central Pública', 'primary', false);
-    this.addRoadSegment(-120, -20, 110, -20, 7.5, 'Avenida Principal Norte', 'primary', false);
-    this.addRoadSegment(-110, -58, 105, -58, 6.5, 'Calle Financiera', 'secondary', false);
-    this.addRoadSegment(-120, -4, 110, -4, 6.5, 'Paseo Peatonal Ruta 101', 'residential', false);
-    this.addRoadSegment(-38, 46, 85, 46, 6.0, 'Calle Residencial Sur', 'residential', false);
-    this.addRoadSegment(-92, -20, -92, 32, 6.0, 'Vía de Servicio PokéEnergy', 'secondary', false);
-    this.addRoadSegment(-62, -20, -62, 32, 6.0, 'Acceso Concesionario', 'secondary', false);
-    this.addRoadSegment(26, -4, 26, 60, 5.5, 'Pasaje Vecinal Este', 'residential', false);
+  buildFallbackNeighborhood(lat = this.baseCoords.lat, lng = this.baseCoords.lng) {
+    this.clearDynamicWorld();
 
-    // Registrar Espacios Públicos de respaldo (Parques con Hierba Alta y Plazas)
-    const park1Pts = [
-      { x: -38, z: -13 },
-      { x: 60, z: -13 },
-      { x: 60, z: 10 },
-      { x: -38, z: 10 }
-    ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z) }));
-    this.addPublicPolygonSpace(park1Pts, { xMin: -38, xMax: 60, zMin: -13, zMax: 10 }, 'Parque Central Ruta 101');
+    const baseLat = Number.isFinite(lat) ? lat : this.baseCoords.lat;
+    const baseLng = Number.isFinite(lng) ? lng : this.baseCoords.lng;
+
+    // Calles reales de la zona
+    const street1 = 'Carrera 10';
+    const street2 = 'Calle 8';
+    const street3 = 'Calle 9';
+    const street4 = 'Carrera 9';
+    const street5 = 'Calle 7';
+
+    // Generar red de calles con coordenadas reales calculadas alrededor de (baseLat, baseLng)
+    this.addRoadSegment(0, -90, 0, 90, 6.2, street1, 'primary', false);
+    this.addRoadSegment(-90, -35, 90, -35, 5.8, street2, 'secondary', false);
+    this.addRoadSegment(-90, 5, 90, 5, 5.8, street3, 'secondary', false);
+    this.addRoadSegment(-90, 45, 90, 45, 5.2, street5, 'residential', false);
+    this.addRoadSegment(45, -90, 45, 90, 5.6, street4, 'residential', false);
+
+    // Parque vecinal transitable con coordenadas reales
+    const parkPts = [
+      { x: -35, z: -10 },
+      { x: 45, z: -10 },
+      { x: 45, z: 2 },
+      { x: -35, z: 2 }
+    ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z, baseLat, baseLng, this.movementScale) }));
+    this.addPublicPolygonSpace(parkPts, { xMin: -35, xMax: 45, zMin: -10, zMax: 2 }, 'Parque Vecinal');
 
     const plazaPts = [
-      { x: -16, z: 8 },
-      { x: 18, z: 8 },
-      { x: 18, z: 28 },
-      { x: -16, z: 28 }
-    ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z) }));
-    this.addPublicPolygonSpace(plazaPts, { xMin: -16, xMax: 18, zMin: 8, zMax: 28 }, 'Plaza Pública de Origen');
+      { x: -12, z: 10 },
+      { x: 14, z: 10 },
+      { x: 14, z: 26 },
+      { x: -12, z: 26 }
+    ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z, baseLat, baseLng, this.movementScale) }));
+    this.addPublicPolygonSpace(plazaPts, { xMin: -12, xMax: 14, zMin: 10, zMax: 26 }, 'Plaza de Origen');
 
     this.createDistrictsAndBuildings();
     this.createNatureAndVegetation();

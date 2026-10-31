@@ -1,20 +1,19 @@
 # Feature: Minimalist Clean Mobility, Dual GPS/Manual Movement, Ultra-Fast OSM Streets & GPS Return Button
 
 ## Objective
-Strip away all legacy simulation systems leaving a clean, lightweight, highly responsive game focused exclusively on:
-1. Smooth character movement and camera controls on both mobile (touch joystick, finger drag, touch camera orbit) and desktop (WASD/arrows, mouse drag).
-2. Real-life GPS movement (walking in real life displaces the character with anti-shake filtering).
-3. Ultra-fast real street and park loading from OpenStreetMap using lightweight `out geom;` queries across fast CDN mirrors.
-4. A prominent, instant **`📍 Centrar en mi GPS`** button with confirmation modal asking whether the user is sure before returning the character to their real GPS location.
-5. A prominent bottom **`🗺️ Ver Mapa`** button/icon that opens the interactive Leaflet/Google Maps view with live player marker, street search, satellite toggle, and 1-tap close (`✕`).
-6. Real-time current local clock in the top bar, and a speed multiplier selector (`1x`, `2x`, `3x`) allowing the user to increase the character's movement speed.
+Implement UI cleanups requested by the user and fix real street synchronization:
+1. Move "Centrar en mi GPS" with confirmation dialog inside the Map Modal.
+2. Merge speed selector inside the clock pill (`🕒 HH:MM:SS • ⚡ 1x`).
+3. Remove floating "Saltar" button (keep jump in keyboard controls).
+4. Remove top-left location pill and Pokémon banner (location stays strictly inside the map).
+5. Only `🗺️ Ver Mapa` remains in the bottom-right HUD.
+6. Fix 3D streets to match real neighborhood by integrating fast OSRM (`routing.openstreetmap.de`) and removing the fake straight grid fallback (`Carrera Central`).
 
 ## Authorized Edit Surfaces
-- `src/main.js`
-- `src/environment/World.js`
 - `src/ui/HUD.js`
 - `src/ui/GoogleMapsApp.js`
-- `src/entities/Player.js`
+- `src/environment/World.js`
+- `src/main.js`
 - `src/style.css`
 
 ## Tasks
@@ -22,11 +21,16 @@ Strip away all legacy simulation systems leaving a clean, lightweight, highly re
 - [x] **TASK-2**: Implement ultra-fast lightweight `out geom;` OSM street loader in `src/environment/World.js` and fluid dual GPS/manual movement in `src/ui/GoogleMapsApp.js` and `src/entities/Player.js`.
 - [x] **TASK-3**: Add bottom HUD button `🗺️ Ver Mapa`, confirmation modal for `📍 Centrar en mi GPS` ("¿Estás seguro de que deseas centrar tu personaje?"), and interactive modal Leaflet Map overlay in `src/ui/HUD.js`, `src/ui/GoogleMapsApp.js`, `src/main.js`, and `src/style.css`.
 - [x] **TASK-4**: Implement real-time current local clock (`new Date()`) and user-selectable movement speed multiplier (`1x`, `2x`, `3x`) in `src/ui/HUD.js`, `src/entities/Player.js`, `src/main.js`, and `src/style.css`.
+- [x] **TASK-5**: Implement UI cleanups (move GPS center inside map with confirmation, merge clock & speed, remove jump button, remove top-left location badge).
   - Route: `delegated-direct` (`odd_writer`).
-  - Risk tier: `medium` (verified via `npm run build` -> `✓ built in 884ms`).
-  - Evidence: `Player.js` implements `setSpeedMultiplier(factor)` scaling velocity, walk swing, and audio steps. `HUD.js` adds dynamic real-time clock and `#btn-toggle-speed` pill cycling `1x Normal` / `2x Rápido` / `3x Turbo`. `main.js` registers `Digit1`/`Digit2`/`Digit3`/`KeyV` keyboard shortcuts.
+  - Risk tier: `medium` (verified via `npm run build` -> `✓ built in 1.07s`).
+  - Evidence: `HUD.js` merges `#btn-clock-speed`, removes jump button and top-left location banners, leaving only `🗺️ Ver Mapa` in bottom-right. `GoogleMapsApp.js` adds `#btn-map-center-gps` with confirmation modal inside map.
+- [x] **TASK-6**: Fix 3D streets to match the real neighborhood using fast OSRM street geometry fallback and removing the fake straight grid.
+  - Route: `delegated-direct` (`odd_writer`).
+  - Risk tier: `medium` (verified via `npm run build` -> `✓ built in 1.07s`).
+  - Evidence: `World.js` adds `buildFromOSRMData()` and eliminates fake `Carrera Central` grid from fallback. `GoogleMapsApp.js` removes synthetic blue lines from Leaflet tiles.
 
 ## Progress & Verification Summary
-- Completed: 4 / 4 tasks.
+- Completed: 6 / 6 tasks.
 - Verification: `npm run build` passed with zero errors.
 - Git status: Committed and pushed to `origin main` for automatic Vercel production rebuild.

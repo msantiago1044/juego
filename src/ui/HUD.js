@@ -17,7 +17,7 @@ export class HUD {
 
     this.currentSpeedMultiplier = 1;
     this.clockEl = null;
-    this.speedTextEl = null;
+    this.speedBadgeEl = null;
 
     this.joystickTouchId = null;
 
@@ -32,33 +32,15 @@ export class HUD {
       <!-- Barra Superior Minimalista -->
       <div class="hud-top-bar">
         <div class="hud-top-left">
-          <div class="hud-location-pill" id="hud-location-pill">
-            📍 <span id="hud-location-text">Cargando ubicación...</span>
-          </div>
           <div class="hud-osm-status-pill hidden" id="hud-osm-status-pill">
             <span class="osm-status-icon" id="hud-osm-status-icon">🔄</span>
             <span class="osm-status-text" id="hud-osm-status-text">Descargando calles reales...</span>
           </div>
         </div>
         <div class="hud-top-right">
-          <button class="hud-speed-pill" id="btn-toggle-speed" type="button" title="Velocidad del personaje (1x, 2x, 3x)">
-            ⚡ <span id="hud-speed-text">1x Normal</span>
+          <button class="hud-clock-speed-pill" id="btn-clock-speed" type="button" title="Hora actual local y velocidad (Toca para cambiar 1x, 2x, 3x)">
+            🕒 <span id="hud-clock">--:--:--</span> • ⚡ <span id="hud-speed-badge">1x</span>
           </button>
-          <div class="hud-clock-pill" id="hud-clock-pill" title="Hora actual local">
-            🕒 <span id="hud-clock">--:-- --</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Cartel de Zona Estilo Pokémon (Esquina Superior Izquierda) -->
-      <div class="pokemon-location-banner" id="pokemon-location-banner">
-        <div class="pokemon-banner-accent" id="pokemon-banner-accent"></div>
-        <div class="pokemon-banner-body">
-          <div class="pokemon-banner-top">
-            <span class="pokemon-banner-badge" id="pokemon-banner-badge">🛣️ VÍA PÚBLICA</span>
-          </div>
-          <div class="pokemon-banner-title" id="pokemon-banner-title">Pueblo Origen • Barranquilla</div>
-          <div class="pokemon-banner-subtitle" id="pokemon-banner-subtitle">Vías y Espacios Públicos Transitables</div>
         </div>
       </div>
 
@@ -82,14 +64,8 @@ export class HUD {
 
       <!-- Botones de Acción en Esquina Inferior Derecha -->
       <div class="hud-bottom-right">
-        <button class="btn-hud-action btn-hud-jump" id="btn-hud-jump" type="button" title="Saltar">
-          ⬆️ <span>Saltar</span>
-        </button>
         <button class="btn-hud-action btn-hud-map" id="btn-hud-map" type="button" title="Ver Mapa Interactivo">
           🗺️ <span>Ver Mapa</span>
-        </button>
-        <button class="btn-center-gps" id="btn-center-gps" type="button" title="Centrar personaje en tu ubicación GPS real">
-          📍 <span>Centrar en mi GPS</span>
         </button>
       </div>
 
@@ -103,41 +79,24 @@ export class HUD {
         <div><strong>[M]</strong> Ver Mapa</div>
         <div><strong>[C]</strong> Centrar GPS</div>
       </div>
-
-      <!-- Modal de Confirmación de Centrado GPS -->
-      <div class="gps-confirm-modal hidden" id="gps-confirm-modal">
-        <div class="gps-confirm-card">
-          <div class="gps-confirm-header">
-            <span class="gps-confirm-icon">📍</span>
-            <h3>Centrar en tu ubicación GPS</h3>
-          </div>
-          <p class="gps-confirm-message">
-            ¿Estás seguro de que deseas regresar y centrar tu personaje a tu ubicación GPS real?
-          </p>
-          <div class="gps-confirm-actions">
-            <button class="btn-gps-confirm-no" id="btn-cancel-center-gps" type="button">Cancelar</button>
-            <button class="btn-gps-confirm-yes" id="btn-confirm-center-gps" type="button">Confirmar y Centrar</button>
-          </div>
-        </div>
-      </div>
     `;
 
     this.container.appendChild(this.hudEl);
 
     // Elementos reactivos de la barra superior
     this.clockEl = this.hudEl.querySelector('#hud-clock');
-    this.speedTextEl = this.hudEl.querySelector('#hud-speed-text');
+    this.speedBadgeEl = this.hudEl.querySelector('#hud-speed-badge');
 
-    // Conectar botón de alternancia de velocidad
-    const btnSpeed = this.hudEl.querySelector('#btn-toggle-speed');
-    if (btnSpeed) {
-      const handleSpeedClick = (e) => {
+    // Conectar botón combinado de reloj y velocidad
+    const btnClockSpeed = this.hudEl.querySelector('#btn-clock-speed');
+    if (btnClockSpeed) {
+      const handleClockSpeedClick = (e) => {
         e.preventDefault();
         e.stopPropagation();
         this.cycleSpeedMultiplier();
       };
-      btnSpeed.addEventListener('click', handleSpeedClick);
-      btnSpeed.addEventListener('touchend', handleSpeedClick);
+      btnClockSpeed.addEventListener('click', handleClockSpeedClick);
+      btnClockSpeed.addEventListener('touchend', handleClockSpeedClick);
     }
 
     // Conectar botón de mapa interactivo
@@ -153,67 +112,16 @@ export class HUD {
       btnMap.addEventListener('click', handleMapToggle);
       btnMap.addEventListener('touchend', handleMapToggle);
     }
-
-    // Conectar botón principal de centrado en GPS (abre confirmación)
-    const btnCenterGps = this.hudEl.querySelector('#btn-center-gps');
-    if (btnCenterGps) {
-      const handleGpsCenterClick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.openGpsConfirmModal();
-      };
-      btnCenterGps.addEventListener('click', handleGpsCenterClick);
-      btnCenterGps.addEventListener('touchend', handleGpsCenterClick);
-    }
-
-    // Conectar botones del modal de confirmación GPS
-    const modalGpsConfirm = this.hudEl.querySelector('#gps-confirm-modal');
-    const btnConfirmGps = this.hudEl.querySelector('#btn-confirm-center-gps');
-    const btnCancelGps = this.hudEl.querySelector('#btn-cancel-center-gps');
-
-    if (btnConfirmGps) {
-      btnConfirmGps.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.closeGpsConfirmModal();
-        if (typeof this.onGpsCenterTap === 'function') {
-          this.onGpsCenterTap();
-        }
-      });
-    }
-
-    if (btnCancelGps) {
-      btnCancelGps.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.closeGpsConfirmModal();
-      });
-    }
-
-    if (modalGpsConfirm) {
-      modalGpsConfirm.addEventListener('click', (e) => {
-        if (e.target === modalGpsConfirm) {
-          this.closeGpsConfirmModal();
-        }
-      });
-    }
   }
 
   openGpsConfirmModal() {
-    const modal = this.hudEl.querySelector('#gps-confirm-modal');
-    if (modal) {
-      modal.classList.remove('hidden');
-      if (this.game?.audioManager) {
-        this.game.audioManager.playUiClick();
-      }
+    if (this.game?.mapsApp && typeof this.game.mapsApp.openGpsConfirmModal === 'function') {
+      this.game.mapsApp.openGpsConfirmModal();
     }
   }
 
   closeGpsConfirmModal() {
-    const modal = this.hudEl.querySelector('#gps-confirm-modal');
-    if (modal) {
-      modal.classList.add('hidden');
-    }
+    // Delegado al modal del mapa interactivo
   }
 
   initTouchControls() {
@@ -312,25 +220,6 @@ export class HUD {
         }
       });
     }
-
-    // Botón Saltar
-    const btnJump = this.hudEl.querySelector('#btn-hud-jump');
-    if (btnJump) {
-      const startJump = (e) => {
-        e.preventDefault();
-        if (typeof this.onJumpTap === 'function') this.onJumpTap(true);
-      };
-      const endJump = (e) => {
-        e.preventDefault();
-        if (typeof this.onJumpTap === 'function') this.onJumpTap(false);
-      };
-      btnJump.addEventListener('touchstart', startJump, { passive: false });
-      btnJump.addEventListener('touchend', endJump, { passive: false });
-      btnJump.addEventListener('touchcancel', endJump, { passive: false });
-      btnJump.addEventListener('mousedown', startJump);
-      btnJump.addEventListener('mouseup', endJump);
-      btnJump.addEventListener('mouseleave', endJump);
-    }
   }
 
   showToast(message, duration = 3000) {
@@ -362,54 +251,8 @@ export class HUD {
   }
 
   showLocationBanner(zoneOrOptions, subTitle = '', accentColor = '#4ade80') {
-    let badge = '🛣️ VÍA PÚBLICA';
-    let title = '';
-    let subtitle = subTitle;
-    let color = accentColor;
-
-    if (typeof zoneOrOptions === 'object' && zoneOrOptions !== null) {
-      badge = zoneOrOptions.badge || '🛣️ VÍA PÚBLICA';
-      title = zoneOrOptions.title || zoneOrOptions.name || 'Pueblo Origen';
-      subtitle = zoneOrOptions.subtitle || '';
-      color = zoneOrOptions.accentColor || '#4ade80';
-    } else {
-      title = String(zoneOrOptions || 'Pueblo Origen');
-    }
-
-    const bannerEl = this.hudEl.querySelector('#pokemon-location-banner');
-    const accentEl = this.hudEl.querySelector('#pokemon-banner-accent');
-    const badgeEl = this.hudEl.querySelector('#pokemon-banner-badge');
-    const titleEl = this.hudEl.querySelector('#pokemon-banner-title');
-    const subEl = this.hudEl.querySelector('#pokemon-banner-subtitle');
-    const locTextEl = this.hudEl.querySelector('#hud-location-text');
-
-    if (locTextEl) {
-      locTextEl.innerText = title;
-    }
-
-    if (!bannerEl) return;
-
-    if (accentEl) accentEl.style.backgroundColor = color;
-    if (badgeEl) {
-      badgeEl.innerText = badge;
-      badgeEl.style.backgroundColor = `${color}28`;
-      badgeEl.style.color = color;
-      badgeEl.style.borderColor = `${color}66`;
-    }
-    if (titleEl) titleEl.innerText = title;
-    if (subEl) subEl.innerText = subtitle;
-
-    bannerEl.style.borderColor = `${color}66`;
-    bannerEl.classList.remove('banner-visible');
-    void bannerEl.offsetWidth;
-    bannerEl.classList.add('banner-visible');
-
-    if (this.bannerTimeout) {
-      clearTimeout(this.bannerTimeout);
-    }
-    this.bannerTimeout = setTimeout(() => {
-      bannerEl.classList.remove('banner-visible');
-    }, 3800);
+    // La ubicación se muestra estrictamente en la cabecera del mapa interactivo
+    // Se mantiene el método para compatibilidad con eventos de zona de main.js
   }
 
   showOsmStatus(status, message) {
@@ -462,8 +305,8 @@ export class HUD {
     const valid = (factor === 2 || factor === 3) ? factor : 1;
     this.currentSpeedMultiplier = valid;
     const label = this.getSpeedLabel(valid);
-    if (this.speedTextEl) {
-      this.speedTextEl.innerText = label;
+    if (this.speedBadgeEl) {
+      this.speedBadgeEl.innerText = `${valid}x`;
     }
     if (notify && typeof this.onSpeedChange === 'function') {
       this.onSpeedChange(valid);
@@ -486,7 +329,7 @@ export class HUD {
 
   update() {
     const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     if (this.clockEl) {
       this.clockEl.innerText = timeStr;
     }
