@@ -1,4 +1,4 @@
-// main.js - Punto de entrada principal y bucle de simulación planetaria de TerraSim 3D
+// main.js - Punto de entrada principal y bucle de simulación limpia de TerraSim 3D
 import * as THREE from 'three';
 import './style.css';
 
@@ -7,23 +7,15 @@ import { AudioManager } from './core/AudioManager.js';
 import { InputManager } from './core/InputManager.js';
 
 import { EarthClock } from './simulation/EarthClock.js';
-import { Geopolitics } from './simulation/Geopolitics.js';
-import { GlobalEconomy } from './simulation/GlobalEconomy.js';
-import { RealEstateMarket } from './simulation/RealEstateMarket.js';
-import { Commodities } from './simulation/Commodities.js';
-import { TechTree } from './simulation/TechTree.js';
-import { NewsEngine } from './simulation/NewsEngine.js';
-
 import { SkyAndAtmosphere } from './environment/SkyAndAtmosphere.js';
 import { WeatherSystem } from './environment/WeatherSystem.js';
 import { World } from './environment/World.js';
 
 import { Player } from './entities/Player.js';
-import { Vehicle } from './entities/Vehicle.js';
 import { ThirdPersonCamera } from './entities/ThirdPersonCamera.js';
 
 import { HUD } from './ui/HUD.js';
-import { SmartphoneUI } from './ui/SmartphoneUI.js';
+import { GoogleMapsApp } from './ui/GoogleMapsApp.js';
 
 class GameApp {
   constructor() {
@@ -32,7 +24,6 @@ class GameApp {
 
     this.initThree();
     this.initCoreSystems();
-    this.initSimulationSystems();
     this.initEnvironment();
     this.initEntities();
     this.initUI();
@@ -75,50 +66,7 @@ class GameApp {
     this.physicsWorld = new PhysicsWorld();
     this.audioManager = new AudioManager();
     this.input = new InputManager(this.container);
-  }
-
-  initSimulationSystems() {
     this.earthClock = new EarthClock();
-    this.geopolitics = new Geopolitics();
-    this.economy = new GlobalEconomy();
-    this.realEstate = new RealEstateMarket();
-    this.commodities = new Commodities();
-    this.techTree = new TechTree();
-    this.newsEngine = new NewsEngine();
-
-    // Eventos al cambiar de día en el juego
-    this.earthClock.onDay((date) => {
-      this.handleDailySettlement();
-    });
-  }
-
-  handleDailySettlement() {
-    // 1. Cobrar Salario del trabajo
-    const salary = this.player.job.salaryDaily || 0;
-    this.player.cash += salary;
-
-    // 2. Cobrar rentas de propiedades adquiridas
-    const rent = this.realEstate.calculateDailyRent();
-    this.player.cash += rent;
-
-    // 3. Cobrar dividendos bursátiles
-    const dividends = this.economy.calculateDividends();
-    this.player.cash += dividends;
-
-    // 4. Actualizar mercados e inflación
-    this.geopolitics.update();
-    this.economy.update(this.geopolitics);
-    this.realEstate.update(this.economy.inflationRate, this.economy.interestRate);
-    this.commodities.update(this.economy.commodities.crudeOil.price, this.economy.inflationRate);
-    this.techTree.update();
-
-    if (this.audioManager) {
-      this.audioManager.playCash();
-    }
-
-    if (this.hud) {
-      this.hud.updateTicker(`💰 Jornada Finalizada: +$${salary} (Salario) | +$${rent} (Rentas) | +$${dividends} (Dividendos)`);
-    }
   }
 
   initEnvironment() {
@@ -129,22 +77,7 @@ class GameApp {
 
   initEntities() {
     this.player = new Player(this.scene, this.physicsWorld, this.audioManager);
-    this.player.position.set(0, 0, 15);
-
-    // Coche deportivo aparcado en la calle para que el jugador pueda conducirlo
-    this.vehicle = new Vehicle(
-      this.scene,
-      this.physicsWorld,
-      this.audioManager,
-      new THREE.Vector3(4, 0, 15),
-      {
-        color: 0x00d4ff,
-        topSpeed: 28,
-        acceleration: 18,
-        handling: 2.2,
-        mass: 1400
-      }
-    );
+    this.player.position.set(0, 0.1, 0);
 
     this.thirdPersonCamera = new ThirdPersonCamera(this.camera, this.container);
   }
@@ -154,25 +87,18 @@ class GameApp {
     this.gameContext = {
       clock: this.earthClock,
       player: this.player,
-      geopolitics: this.geopolitics,
-      economy: this.economy,
-      realEstateMarket: this.realEstate,
-      commodities: this.commodities,
-      techTree: this.techTree,
-      newsEngine: this.newsEngine,
       weather: this.weather,
       world: this.world,
       physicsWorld: this.physicsWorld,
       audioManager: this.audioManager,
-      vehicle: this.vehicle,
-      smartphoneUI: null,
+      thirdPersonCamera: this.thirdPersonCamera,
       mapsApp: null,
+      hud: null,
       onCityChanged: (cityName, placeLabel) => this.onCityChanged(cityName, placeLabel)
     };
 
-    this.smartphoneUI = new SmartphoneUI(this.uiRoot, this.gameContext);
-    this.smartphone = this.smartphoneUI;
-    this.gameContext.smartphoneUI = this.smartphoneUI;
+    this.mapsApp = new GoogleMapsApp(this.gameContext);
+    this.gameContext.mapsApp = this.mapsApp;
 
     this.hud = new HUD(this.uiRoot, this.gameContext);
     this.gameContext.hud = this.hud;
@@ -194,38 +120,26 @@ class GameApp {
     this.hud.onJoystickMove = (nx, ny, isSprint) => {
       this.input.setTouchMove(nx, ny, isSprint);
     };
-    this.hud.onInteractTap = () => {
-      this.handleInteraction();
-    };
     this.hud.onJumpTap = (active) => {
       this.input.setTouchJump(active);
     };
-    this.hud.onMapButtonTap = () => {
-      this.smartphoneUI.toggleMapApp();
-    };
-    this.hud.onGpsConfirmTap = () => {
-      if (this.smartphoneUI && this.smartphoneUI.mapsApp) {
-        this.smartphoneUI.mapsApp.returnPlayerToCurrentGPS();
+    this.hud.onGpsCenterTap = () => {
+      if (this.mapsApp) {
+        this.mapsApp.centerPlayerOnRealGps();
       }
     };
   }
 
   getActiveCityName() {
-    return (
-      this.smartphone?.mapsApp?.currentCity ||
-      this.gameContext?.mapsApp?.cityName ||
-      'Barranquilla'
-    );
+    return this.mapsApp?.cityName || 'Barranquilla';
   }
 
   onCityChanged(cityName, placeLabel = null) {
     if (!this.world || !this.hud) return;
-    const activePos = (this.player.isInVehicle || this.vehicle?.isOccupied)
-      ? this.vehicle.position
-      : this.player.position;
+    const activePos = this.player.position;
     const zone = this.world.getZoneAt(activePos);
     this.currentZoneId = zone.id;
-    const coords = this.gameContext?.mapsApp?.currentCoords;
+    const coords = this.mapsApp?.currentCoords;
     const coordSuffix = coords ? ` • ${coords.lat.toFixed(4)}° N` : '';
     const subtitle = placeLabel ? `${placeLabel} — ${zone.subtitle}` : `${zone.subtitle}${coordSuffix}`;
 
@@ -244,7 +158,7 @@ class GameApp {
       const isInitial = this.currentZoneId === null;
       this.currentZoneId = zone.id;
       const cityName = this.getActiveCityName();
-      const coords = this.gameContext?.mapsApp?.currentCoords;
+      const coords = this.mapsApp?.currentCoords;
       const coordSuffix = coords ? ` • ${coords.lat.toFixed(4)}° N` : '';
 
       if (!isInitial && this.audioManager) {
@@ -261,95 +175,14 @@ class GameApp {
   }
 
   bindEvents() {
-    // Interacción con Tecla 'E'
-    this.input.on('interact', () => {
-      this.handleInteraction();
-    });
-
-    // Abrir Smartphone con Tecla 'TAB'
-    this.input.on('togglePhone', () => {
-      this.smartphoneUI.toggle();
-    });
-
-    // Abrir Mapa directamente con Tecla 'M'
-    this.input.on('toggleMap', () => {
-      this.smartphoneUI.toggleMapApp();
-    });
-  }
-
-  handleInteraction() {
-    // 1. Si está dentro del coche, salir del vehículo
-    if (this.player.isInVehicle) {
-      this.player.exitVehicle();
-      return;
-    }
-
-    // 2. Si está cerca del coche, entrar al vehículo
-    const distToCar = this.player.position.distanceTo(this.vehicle.position);
-    if (distToCar < 3.8) {
-      this.player.enterVehicle(this.vehicle);
-      return;
-    }
-
-    // 3. Si está en un punto interactivo de la ciudad
-    const spot = this.world.getNearestSpot(this.player.position);
-    if (spot) {
-      if (spot.action === 'openStockMarket') {
-        this.smartphoneUI.openApp('stocks');
-        if (!this.smartphoneUI.isOpen) this.smartphoneUI.toggle();
-      } else if (spot.action === 'openRealEstate') {
-        this.smartphoneUI.openApp('realestate');
-        if (!this.smartphoneUI.isOpen) this.smartphoneUI.toggle();
-      } else if (spot.action === 'openJobs') {
-        this.smartphoneUI.openApp('jobs');
-        if (!this.smartphoneUI.isOpen) this.smartphoneUI.toggle();
-      } else if (spot.action === 'openGeopolitics') {
-        this.smartphoneUI.openApp('geopolitics');
-        if (!this.smartphoneUI.isOpen) this.smartphoneUI.toggle();
-      } else if (spot.action === 'refuelCar') {
-        // Repostar coche
-        const fuelPrice = this.commodities.fuelPricePerLiter;
-        const res = this.vehicle.refuel(30, fuelPrice);
-        if (res.added > 0) {
-          if (this.player.cash >= res.cost) {
-            this.player.cash -= res.cost;
-            if (this.audioManager) this.audioManager.playCash();
-            this.hud.updateTicker(`⛽ Repostados ${res.added.toFixed(1)}L por $${res.cost.toFixed(2)}`);
-          } else {
-            alert('Fondos insuficientes para repostar');
-          }
-        } else {
-          this.hud.updateTicker('⛽ El tanque del vehículo ya está lleno al 100%');
+    // Tecla 'C' o 'G' también puede centrar en GPS
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyC' || e.code === 'KeyG') {
+        if (this.mapsApp) {
+          this.mapsApp.centerPlayerOnRealGps();
         }
-      } else if (spot.action === 'openDealership') {
-        this.smartphoneUI.openApp('tech');
-        if (!this.smartphoneUI.isOpen) this.smartphoneUI.toggle();
-      } else if (spot.action === 'openBank') {
-        this.smartphoneUI.openApp('stocks');
-        if (!this.smartphoneUI.isOpen) this.smartphoneUI.toggle();
       }
-    }
-  }
-
-  updateInteractionsPrompt() {
-    if (this.player.isInVehicle) {
-      this.hud.showPrompt('Salir del vehículo');
-      return;
-    }
-
-    const distToCar = this.player.position.distanceTo(this.vehicle.position);
-    if (distToCar < 3.8) {
-      this.hud.showPrompt('Conducir Vehículo');
-      return;
-    }
-
-    const spot = this.world.getNearestSpot(this.player.position);
-    if (spot) {
-      this.hud.showPrompt(spot.name);
-      return;
-    }
-
-    this.hud.hidePrompt();
+    });
   }
 
   animate() {
@@ -359,7 +192,7 @@ class GameApp {
     const rawDelta = this.clockTimer.getDelta();
     const dt = Math.min(rawDelta, 0.05);
 
-    // 1. Reloj del juego y ciclo astronómico
+    // 1. Reloj del juego y ciclo celeste
     this.earthClock.update(dt);
     const timeFraction = this.earthClock.getTimeFraction();
     this.sky.update(timeFraction);
@@ -367,44 +200,27 @@ class GameApp {
     const hour = this.earthClock.date.getHours();
     const isNight = (hour >= 20 || hour < 6);
 
-    // 2. Noticias mundiales en tiempo real
-    const newNews = this.newsEngine.update(dt, this.earthClock, this.geopolitics, this.economy, this.audioManager);
-    if (newNews) {
-      this.hud.updateTicker(`📢 ${newNews.category}: ${newNews.headline}`);
-    }
-
-    // 3. Físicas de Entidades
+    // 2. Físicas de cámara y jugador
     const mouseDelta = this.input.consumeMouseDelta();
     this.thirdPersonCamera.updateMouse(mouseDelta);
 
     const cameraYaw = this.thirdPersonCamera.getYaw();
+    this.player.update(dt, this.input, cameraYaw);
+    this.thirdPersonCamera.update(dt, this.player.position, false);
 
-    if (this.player.isInVehicle) {
-      this.vehicle.update(dt, this.input, isNight);
-      this.thirdPersonCamera.update(dt, this.vehicle.position, true);
-    } else {
-      this.vehicle.update(dt, { isForward: () => false, isBackward: () => false, isLeft: () => false, isRight: () => false, isJump: () => false }, isNight);
-      this.player.update(dt, this.input, cameraYaw);
-      this.thirdPersonCamera.update(dt, this.player.position, false);
-    }
-
-    // 4. Clima y Ambiente (lluvia, partículas, charcos, fricción del PhysicsWorld)
-    const activePos = (this.player.isInVehicle || this.vehicle?.isOccupied) ? this.vehicle.position : this.player.position;
+    // 3. Clima y Ambiente (lluvia, partículas, charcos, hierba alta)
+    const activePos = this.player.position;
     this.weather.update(dt, activePos, this.sky);
     this.world.update(dt, isNight, activePos);
     this.checkZoneTransition(activePos);
 
-    // 5. Prompts y HUD
-    this.updateInteractionsPrompt();
+    // 4. GPS en tiempo real y HUD
+    if (this.mapsApp) {
+      this.mapsApp.update(dt);
+    }
     this.hud.update();
-    if (this.smartphoneUI && typeof this.smartphoneUI.update === 'function') {
-      this.smartphoneUI.update();
-    }
-    if (this.gameContext?.mapsApp) {
-      this.gameContext.mapsApp.update(dt);
-    }
 
-    // 6. Renderizar escena
+    // 5. Renderizar escena
     this.renderer.render(this.scene, this.camera);
   }
 }

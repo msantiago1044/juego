@@ -218,6 +218,66 @@ export class GoogleMapsApp {
     );
   }
 
+  centerPlayerOnRealGps() {
+    const applyCenter = (lat, lng) => {
+      let originWalk = { x: 0, z: 0 };
+      if (this.game?.world) {
+        originWalk = this.game.world.getNearestWalkablePoint(0, 0);
+      }
+
+      if (this.game?.player) {
+        this.game.player.position.set(originWalk.x, 0.1, originWalk.z);
+        this.game.player.velocity.set(0, 0, 0);
+        this.game.player.rotationY = 0;
+        if (this.game.player.mesh) {
+          this.game.player.mesh.position.set(originWalk.x, 0.1, originWalk.z);
+          this.game.player.mesh.rotation.y = 0;
+        }
+      }
+
+      this.gpsPendingDelta = { x: 0, z: 0 };
+      this.gpsTargetWorldOffset = { x: 0, z: 0 };
+      this.lastWatchCoords = { lat, lng };
+
+      if (this.game?.thirdPersonCamera) {
+        this.game.thirdPersonCamera.yaw = 0;
+        this.game.thirdPersonCamera.pitch = 0.28;
+      }
+
+      if (this.game?.audioManager) {
+        this.game.audioManager.playUiClick();
+      }
+
+      if (this.game?.hud?.showToast) {
+        this.game.hud.showToast('📍 Personaje centrado en tu ubicación GPS real');
+      }
+    };
+
+    if (this.realGpsCoords) {
+      applyCenter(this.realGpsCoords.lat, this.realGpsCoords.lng);
+    } else if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+          this.realGpsCoords = { lat, lng };
+          this.hasVerifiedGps = true;
+          this.verifiedGpsSource = 'hardware_gps';
+          this.reverseGeocodeAndSetCity(lat, lng, 'hardware_gps');
+          applyCenter(lat, lng);
+        },
+        () => {
+          if (this.baseCoords) {
+            applyCenter(this.baseCoords.lat, this.baseCoords.lng);
+          }
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      );
+    } else if (this.baseCoords) {
+      applyCenter(this.baseCoords.lat, this.baseCoords.lng);
+    }
+  }
+
   returnPlayerToCurrentGPS(onComplete = null) {
     const applyReturn = async (lat, lng, verifiedSource = null) => {
       this.baseCoords = { lat, lng };

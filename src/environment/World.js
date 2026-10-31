@@ -196,26 +196,13 @@ export class World {
       });
     }
 
-    // 3. Consultar OpenStreetMap Overpass API optimizado (radio 280m para respuesta ultrarrápida)
-    const query = `
-      [out:json][timeout:10];
-      (
-        way["highway"](around:280,${lat},${lng});
-        way["leisure"~"park|plaza|garden|playground|pitch|recreation_ground"](around:280,${lat},${lng});
-        way["landuse"~"grass|recreation_ground|village_green"](around:280,${lat},${lng});
-        way["place"="square"](around:280,${lat},${lng});
-        way["building"](around:220,${lat},${lng});
-      );
-      out body;
-      >;
-      out skel qt;
-    `.trim();
-
+    // 3. Consultar OpenStreetMap Overpass API ultrarrápido con out geom para calles y parques
+    const query = `[out:json][timeout:15];(way["highway"](around:350,${lat},${lng});way["leisure"="park"](around:350,${lat},${lng});way["landuse"~"grass|village_green"](around:350,${lat},${lng}););out geom;`;
+    const encoded = encodeURIComponent(query);
     const endpoints = [
-      'https://overpass-api.de/api/interpreter',
-      'https://overpass.kumi.systems/api/interpreter',
-      'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-      'https://overpass.private.coffee/api/interpreter'
+      `https://overpass-api.de/api/interpreter?data=${encoded}`,
+      `https://overpass.kumi.systems/api/interpreter?data=${encoded}`,
+      `https://maps.mail.ru/osm/tools/overpass/api/interpreter?data=${encoded}`
     ];
 
     let osmData = null;
@@ -223,14 +210,12 @@ export class World {
       if (signal.aborted) return;
       try {
         const timeoutController = new AbortController();
-        const timeoutId = setTimeout(() => timeoutController.abort(), 7500);
+        const timeoutId = setTimeout(() => timeoutController.abort(), 7000);
         const combinedAbort = () => timeoutController.abort();
         signal.addEventListener('abort', combinedAbort, { once: true });
 
         const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-          body: `data=${encodeURIComponent(query)}`,
+          method: 'GET',
           signal: timeoutController.signal
         });
         clearTimeout(timeoutId);
@@ -297,40 +282,35 @@ export class World {
   buildFromOSMData(osmData, baseLat, baseLng, scale) {
     this.clearDynamicWorld();
 
-    const nodesMap = new Map();
-    const ways = [];
-
-    for (const el of osmData.elements) {
-      if (el.type === 'node' && Number.isFinite(el.lat) && Number.isFinite(el.lon)) {
-        const pt = this.latLngToWorld(el.lat, el.lon, baseLat, baseLng, scale);
-        nodesMap.set(el.id, { id: el.id, lat: el.lat, lng: el.lon, x: pt.x, z: pt.z });
-      } else if (el.type === 'way' && Array.isArray(el.nodes)) {
-        ways.push(el);
-      }
-    }
-
     const highwayWays = [];
     const parkWays = [];
-    const buildingWays = [];
 
-    for (const way of ways) {
-      const tags = way.tags || {};
-      if (tags.highway) {
-        highwayWays.push(way);
-      } else if (
-        tags.leisure ||
-        tags.landuse === 'grass' ||
-        tags.landuse === 'recreation_ground' ||
-        tags.landuse === 'village_green' ||
-        tags.place === 'square'
-      ) {
-        parkWays.push(way);
-      } else if (tags.building) {
-        buildingWays.push(way);
+    for (const el of osmData.elements) {
+      if (el.type === 'way') {
+        const tags = el.tags || {};
+        if (tags.highway) {
+          highwayWays.push(el);
+        } else if (
+          tags.leisure === 'park' ||
+          tags.landuse === 'grass' ||
+          tags.landuse === 'village_green'
+        ) {
+          parkWays.push(el);
+        }
       }
     }
 
-    // 1. Procesar y renderizar VÍAS PÚBLICAS reales (highway)
+    const extractPoints = (way) => {
+      if (Array.isArray(way.geometry) && way.geometry.length > 0) {
+        return way.geometry.map(pt => {
+          const w = this.latLngToWorld(pt.lat, pt.lon, baseLat, baseLng, scale);
+          return { lat: pt.lat, lng: pt.lon, x: w.x, z: w.z };
+        });
+      }
+      return [];
+    };
+
+    // 1. Procesar y renderizar VÍAS PÚBLICAS reales (highway) con calzadas y aceras estilo Pokémon
     const vertexSet = new Set();
     for (const way of highwayWays) {
       const tags = way.tags || {};
@@ -339,12 +319,12 @@ export class World {
       let isPedestrian = false;
 
       if (/^(motorway|trunk|primary|secondary|tertiary|primary_link|secondary_link)$/.test(hw)) {
-        width = 6.5;
+        width = 6.8;
       } else if (/^(footway|pedestrian|path|service|cycleway|steps|track)$/.test(hw)) {
         width = 3.6;
         isPedestrian = true;
       } else {
-        width = 5.0;
+        width = 5.2;
       }
 
       const defaultRoadName = isPedestrian
@@ -352,13 +332,13 @@ export class World {
         : (width >= 6.2 ? 'Avenida Principal' : 'Calle Pública');
       const roadName = tags.name || tags.ref || defaultRoadName;
 
-      const pts = way.nodes.map(nid => nodesMap.get(nid)).filter(Boolean);
+      const pts = extractPoints(way);
       for (let i = 0; i < pts.length - 1; i++) {
         const a = pts[i];
         const b = pts[i + 1];
         const segLen = Math.hypot(b.x - a.x, b.z - a.z);
-        if (segLen < 0.4) continue;
-        if (Math.hypot((a.x + b.x) * 0.5, (a.z + b.z) * 0.5) > 220) continue;
+        if (segLen < 0.3) continue;
+        if (Math.hypot((a.x + b.x) * 0.5, (a.z + b.z) * 0.5) > 280) continue;
 
         this.addRoadSegment(a.x, a.z, b.x, b.z, width, roadName, hw, isPedestrian, a.lat, a.lng, b.lat, b.lng);
 
@@ -375,10 +355,10 @@ export class World {
       }
     }
 
-    // 2. Procesar y renderizar ESPACIOS PÚBLICOS reales (parques, plazas, zonas verdes)
+    // 2. Procesar y renderizar ESPACIOS PÚBLICOS reales (parques, zonas verdes) con hierba alta animada
     for (const way of parkWays) {
       const tags = way.tags || {};
-      const pts = way.nodes.map(nid => nodesMap.get(nid)).filter(Boolean);
+      const pts = extractPoints(way);
       if (pts.length < 3) continue;
 
       let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
@@ -391,20 +371,18 @@ export class World {
 
       const cx = (xMin + xMax) * 0.5;
       const cz = (zMin + zMax) * 0.5;
-      if (Math.hypot(cx, cz) > 210) continue;
+      if (Math.hypot(cx, cz) > 260) continue;
 
-      const parkName = tags.name || (tags.place === 'square' ? 'Plaza Pública' : 'Parque Público');
+      const parkName = tags.name || 'Parque Público';
       this.addPublicPolygonSpace(pts, { xMin, xMax, zMin, zMax }, parkName);
     }
 
-    // Garantizar que junto a la vía más cercana al punto de origen exista una plazoletra/acera de bienvenida
-    // y al menos un Parque Público con hierba alta si OSM no tenía uno inmediato
+    // Garantizar plazoleta accesible en el origen (0,0)
     const originWalk = this.getNearestWalkablePoint(0, 0);
-    this.addPublicCircleSpace(originWalk.x, originWalk.z, 6.2, 'Plazoleta de Acceso Público', true);
+    this.addPublicCircleSpace(originWalk.x, originWalk.z, 6.5, 'Plazoleta de Acceso Público', true);
 
     if (this.publicSpaces.length <= 1) {
-      // Crear un Parque Público conectado a una calle cercana para que siempre haya un espacio público con hierba alta
-      const parkAnchor = this.getNearestWalkablePoint(18, 12);
+      const parkAnchor = this.getNearestWalkablePoint(16, 12);
       const px = parkAnchor.x + 10;
       const pz = parkAnchor.z + 8;
       const fallbackPts = [
@@ -422,76 +400,105 @@ export class World {
       this.addRoadSegment(parkAnchor.x, parkAnchor.z, px, pz, 4.2, 'Sendero al Parque', 'footway', true);
     }
 
-    // 3. Procesar y renderizar EDIFICIOS (Propiedad Privada en las manzanas)
-    const wallPalette = [0xfef3c7, 0xf1f5f9, 0xfef9c3, 0xffedd5, 0xe0f2fe, 0xf3e8ff];
-    const roofPalette = [0xef4444, 0x3b82f6, 0x10b981, 0xeab308, 0xec4899, 0x8b5cf6];
-    const towerPalette = [0x1e293b, 0x334155, 0x1d4ed8, 0x0f766e, 0x475569];
+    // 3. Bloques suburbanos agradables y ligeros (sin sobrecargar con cientos de edificios)
+    this.renderSuburbanBlocks();
 
-    let renderedBuildings = 0;
-    for (let i = 0; i < buildingWays.length && renderedBuildings < 110; i++) {
-      const way = buildingWays[i];
-      const pts = way.nodes.map(nid => nodesMap.get(nid)).filter(Boolean);
-      if (pts.length < 3) continue;
-
-      let xMin = Infinity, xMax = -Infinity, zMin = Infinity, zMax = -Infinity;
-      for (const p of pts) {
-        if (p.x < xMin) xMin = p.x;
-        if (p.x > xMax) xMax = p.x;
-        if (p.z < zMin) zMin = p.z;
-        if (p.z > zMax) zMax = p.z;
-      }
-
-      const cx = (xMin + xMax) * 0.5;
-      const cz = (zMin + zMax) * 0.5;
-      if (Math.hypot(cx, cz) > 155) continue;
-
-      const w = Math.max(4.5, Math.min(24, (xMax - xMin) * 0.85));
-      const d = Math.max(4.5, Math.min(24, (zMax - zMin) * 0.85));
-
-      // Evitar colocar un edificio sobre el eje central de una vía pública o dentro de un parque público
-      if (this.isPositionWalkable(cx, cz, -0.4)) continue;
-
-      const tags = way.tags || {};
-      const levels = parseInt(tags['building:levels'], 10) || (w > 13 || d > 13 ? 4 : 2);
-      const height = Math.min(42, Math.max(7.5, levels * 3.8));
-
-      if (levels <= 2 && w < 14 && d < 14) {
-        this.createPokemonHouse(
-          cx,
-          cz,
-          w,
-          d,
-          height,
-          wallPalette[renderedBuildings % wallPalette.length],
-          roofPalette[renderedBuildings % roofPalette.length],
-          tags.name || 'Propiedad Privada'
-        );
-      } else {
-        this.createBuilding(
-          cx,
-          cz,
-          w,
-          d,
-          height,
-          towerPalette[renderedBuildings % towerPalette.length],
-          tags.name || 'Edificio Privado',
-          roofPalette[renderedBuildings % roofPalette.length]
-        );
-      }
-      renderedBuildings++;
-    }
-
-    // 4. Colocar farolas urbanas y árboles a lo largo de las vías reales
+    // 4. Farolas urbanas a lo largo de las vías públicas
     this.populateAlongRealStreets();
-
-    // 5. Ubicar los 7 puntos interactivos sobre las vías públicas reales para que sean 100% accesibles
-    this.setupInteractiveSpotsOnStreets();
 
     return {
       roadCount: this.roadSegments.length,
       parkCount: this.publicSpaces.length,
-      buildingCount: renderedBuildings
+      buildingCount: 0
     };
+  }
+
+  renderSuburbanBlocks() {
+    const wallPalette = [0xfef3c7, 0xf1f5f9, 0xfef9c3, 0xffedd5, 0xe0f2fe];
+    const roofPalette = [0xef4444, 0x3b82f6, 0x10b981, 0xeab308, 0x8b5cf6];
+
+    const step = Math.max(1, Math.floor(this.roadSegments.length / 10));
+    let houseCount = 0;
+
+    for (let i = 0; i < this.roadSegments.length && houseCount < 10; i += step) {
+      const seg = this.roadSegments[i];
+      if (!seg) continue;
+      const mx = (seg.ax + seg.bx) * 0.5;
+      const mz = (seg.az + seg.bz) * 0.5;
+      const dx = seg.bx - seg.ax;
+      const dz = seg.bz - seg.az;
+      const len = Math.hypot(dx, dz) || 1;
+      const nx = -dz / len;
+      const nz = dx / len;
+      const side = (houseCount % 2 === 0 ? 1 : -1);
+      const houseOffset = seg.width * 0.5 + 9.0;
+      const hx = mx + nx * houseOffset * side;
+      const hz = mz + nz * houseOffset * side;
+
+      if (Math.hypot(hx, hz) < 180 && !this.isPositionWalkable(hx, hz, 0.8)) {
+        this.createPokemonHouse(
+          hx,
+          hz,
+          10,
+          9,
+          7.5,
+          wallPalette[houseCount % wallPalette.length],
+          roofPalette[houseCount % roofPalette.length],
+          'Propiedad Privada'
+        );
+
+        const treeOffset = seg.width * 0.5 + 5.5;
+        const tx = mx + nx * treeOffset * side + (dx / len) * 3.5;
+        const tz = mz + nz * treeOffset * side + (dz / len) * 3.5;
+        if (!this.isPositionWalkable(tx, tz, 0.4)) {
+          this.createTree(tx, tz);
+        }
+
+        houseCount++;
+      }
+    }
+
+    for (let i = 0; i < Math.min(20, this.roadSegments.length); i += 2) {
+      const seg = this.roadSegments[i];
+      if (!seg) continue;
+      const mx = (seg.ax + seg.bx) * 0.5;
+      const mz = (seg.az + seg.bz) * 0.5;
+      const dx = seg.bx - seg.ax;
+      const dz = seg.bz - seg.az;
+      const len = Math.hypot(dx, dz) || 1;
+      const tx = mx + (-dz / len) * (seg.width * 0.5 + 4.2);
+      const tz = mz + (dx / len) * (seg.width * 0.5 + 4.2);
+      if (Math.hypot(tx, tz) < 190 && !this.isPositionWalkable(tx, tz, 0.3)) {
+        this.createTree(tx, tz);
+      }
+    }
+  }
+
+  createTree(tx, tz, scale = 1.0) {
+    const treeTrunkGeo = new THREE.CylinderGeometry(0.32 * scale, 0.48 * scale, 2.4 * scale, 6);
+    const treeTrunkMat = new THREE.MeshLambertMaterial({ color: 0x5d4037 });
+    const treeFoliageGeo = new THREE.ConeGeometry(2.4 * scale, 4.8 * scale, 7);
+    const treeFoliageMat = new THREE.MeshLambertMaterial({ color: 0x166534, flatShading: true });
+
+    const tree = new THREE.Group();
+    const trunk = new THREE.Mesh(treeTrunkGeo, treeTrunkMat);
+    trunk.position.y = 1.2 * scale;
+    trunk.castShadow = true;
+    tree.add(trunk);
+
+    const foliage = new THREE.Mesh(treeFoliageGeo, treeFoliageMat);
+    foliage.position.y = 4.2 * scale;
+    foliage.castShadow = true;
+    tree.add(foliage);
+
+    tree.position.set(tx, 0, tz);
+    this.dynamicWorldGroup.add(tree);
+
+    const box = new THREE.Box3();
+    box.setFromCenterAndSize(new THREE.Vector3(tx, 1.2 * scale, tz), new THREE.Vector3(0.8 * scale, 2.4 * scale, 0.8 * scale));
+    if (this.physicsWorld) {
+      this.physicsWorld.addStaticBox(box, { label: 'Árbol' });
+    }
   }
 
   addRoadSegment(ax, az, bx, bz, width = 5.0, name = 'Calle Pública', highwayType = 'residential', isPedestrian = false, aLat = null, aLng = null, bLat = null, bLng = null) {
