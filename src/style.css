@@ -93,69 +93,45 @@ body, html {
   transition: all 0.3s ease;
 }
 
-.hud-camera-selector {
+.hud-camera-select-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   background: rgba(15, 23, 42, 0.88);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border: 1.5px solid rgba(56, 189, 248, 0.35);
   border-radius: 999px;
-  padding: 4px 6px;
+  padding: 4px 10px 4px 12px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
   user-select: none;
 }
 
-.btn-camera-view {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 6px 11px;
-  color: #94a3b8;
-  font-size: 0.82rem;
-  font-weight: 700;
+.hud-camera-select-label {
+  font-size: 1rem;
+  color: #38bdf8;
   cursor: pointer;
+}
+
+.hud-camera-select {
+  background: transparent;
+  border: none;
+  color: #f1f5f9;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-family: var(--font-main);
   outline: none;
-  transition: all 0.18s ease;
-  white-space: nowrap;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
 }
 
-.btn-camera-view:hover {
-  color: #ffffff;
-  background: rgba(56, 189, 248, 0.18);
-  transform: translateY(-1px);
-}
-
-.btn-camera-view.active {
-  color: #ffffff;
-  background: linear-gradient(135deg, #0284c7, #0369a1);
-  border-color: #38bdf8;
-  box-shadow: 0 4px 14px rgba(56, 189, 248, 0.45);
-  font-weight: 800;
-}
-
-.btn-camera-view:active {
-  transform: translateY(1px) scale(0.96);
-}
-
-@media (max-width: 768px) {
-  .cam-btn-text {
-    display: none;
-  }
-  .btn-camera-view {
-    padding: 6px 8px;
-    font-size: 1rem;
-  }
-  .hud-camera-selector {
-    padding: 3px 4px;
-    gap: 2px;
-  }
+.hud-camera-select option {
+  background: #0f172a;
+  color: #f1f5f9;
+  font-weight: 600;
+  padding: 8px;
 }
 
 .hud-clock-pill {

@@ -38,23 +38,16 @@ export class HUD {
           </div>
         </div>
         <div class="hud-top-right">
-          <!-- Selector Rápido de Modos de Cámara -->
-          <div class="hud-camera-selector" id="hud-camera-selector" title="Modos de visualización de cámara">
-            <button class="btn-camera-view active" data-mode="normal" type="button" title="Cámara Normal (3ra Persona)">
-              🚶 <span class="cam-btn-text">Normal</span>
-            </button>
-            <button class="btn-camera-view" data-mode="panoramic" type="button" title="Panorámica Lejana (Ciudad/Barrio)">
-              🔭 <span class="cam-btn-text">Panorámica</span>
-            </button>
-            <button class="btn-camera-view" data-mode="airplane" type="button" title="Vista de Avión / Dron Aéreo">
-              ✈️ <span class="cam-btn-text">Avión</span>
-            </button>
-            <button class="btn-camera-view" data-mode="isometric" type="button" title="Vista Isométrica en Ángulo 45°">
-              📐 <span class="cam-btn-text">Isométrica</span>
-            </button>
-            <button class="btn-camera-view" data-mode="first_person" type="button" title="Primera Persona (Ojos del Personaje)">
-              👁️ <span class="cam-btn-text">1ra Persona</span>
-            </button>
+          <!-- Selector Desplegable Compacto de Modos de Vista -->
+          <div class="hud-camera-select-wrap">
+            <label class="hud-camera-select-label" for="hud-camera-select">📷</label>
+            <select class="hud-camera-select" id="hud-camera-select" title="Seleccionar modo de cámara">
+              <option value="normal" selected>🚶 Normal</option>
+              <option value="panoramic">🔭 Panorámica</option>
+              <option value="airplane">✈️ Avión</option>
+              <option value="isometric">📐 Isométrica</option>
+              <option value="first_person">👁️ 1ra Persona</option>
+            </select>
           </div>
 
           <div class="hud-clock-pill" id="hud-clock-pill" title="Hora actual en vivo">
@@ -117,18 +110,13 @@ export class HUD {
     // Elemento reactivo del reloj
     this.clockEl = this.hudEl.querySelector('#hud-clock');
 
-    // Conectar botones de visualización de cámara
-    const camButtons = this.hudEl.querySelectorAll('.btn-camera-view');
-    camButtons.forEach(btn => {
-      const mode = btn.getAttribute('data-mode');
-      const handleTap = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.selectCameraMode(mode);
-      };
-      btn.addEventListener('click', handleTap);
-      btn.addEventListener('touchend', handleTap);
-    });
+    // Conectar selector desplegable de modos de cámara
+    const camSelect = this.hudEl.querySelector('#hud-camera-select');
+    if (camSelect) {
+      camSelect.addEventListener('change', (e) => {
+        this.selectCameraMode(e.target.value);
+      });
+    }
 
     // Conectar botón de mapa interactivo
     const btnMap = this.hudEl.querySelector('#btn-hud-map');
@@ -342,14 +330,10 @@ export class HUD {
 
   selectCameraMode(modeId, notify = true) {
     this.currentCameraMode = modeId;
-    const buttons = this.hudEl.querySelectorAll('.btn-camera-view');
-    buttons.forEach(b => {
-      if (b.getAttribute('data-mode') === modeId) {
-        b.classList.add('active');
-      } else {
-        b.classList.remove('active');
-      }
-    });
+    const camSelect = this.hudEl.querySelector('#hud-camera-select');
+    if (camSelect && camSelect.value !== modeId) {
+      camSelect.value = modeId;
+    }
 
     if (notify && typeof this.onCameraModeChange === 'function') {
       const modeConfig = this.onCameraModeChange(modeId);

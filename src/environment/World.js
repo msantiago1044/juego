@@ -35,7 +35,7 @@ export class World {
 
     // Módulo optimizado de edificios reales 3D con vertexColors, mergeGeometries y caché IndexedDB
     this.osmBuildings = new OSMBuildings({
-      scene: this.dynamicWorldGroup,
+      scene: this.scene,
       physicsWorld: this.physicsWorld,
       latLngToWorld: (lat, lng) => this.latLngToWorld(lat, lng),
       isPositionWalkable: (x, z) => this.isPositionWalkable(x, z)
@@ -632,8 +632,12 @@ export class World {
     // 4. Parques y Espacios Públicos: Solo se registran si provienen de datos geográficos reales
     // Se evita crear polígonos sintéticos arbitrarios que desfacen la realidad del mapa.
 
-    // 5. Edificios suburbanos y farolas a lo largo de las vías
-    this.renderSuburbanBlocks();
+    // 5. Edificios y farolas a lo largo de las vías públicas
+    if (this.osmBuildings) {
+      this.osmBuildings.buildFromElements([], baseLat, baseLng, scale, this.roadSegments);
+    } else {
+      this.renderSuburbanBlocks();
+    }
     this.populateAlongRealStreets();
 
     const sampleNames = Array.from(nameSet).slice(0, 4);
@@ -787,7 +791,7 @@ export class World {
     // 5. Procesar y renderizar EDIFICIOS REALES DE OPENSTREETMAP con sus alturas y fachadas
     let buildingCount = 0;
     if (this.osmBuildings) {
-      buildingCount = this.osmBuildings.buildFromElements(osmData.elements, baseLat, baseLng, scale);
+      buildingCount = this.osmBuildings.buildFromElements(osmData.elements, baseLat, baseLng, scale, this.roadSegments);
     } else if (buildingWays.length > 0) {
       buildingCount = this.renderRealOsmBuildings(buildingWays, extractPoints);
     }
@@ -1622,8 +1626,12 @@ export class World {
     ].map(p => ({ ...p, ...this.worldToLatLng(p.x, p.z, baseLat, baseLng, this.movementScale) }));
     this.addPublicPolygonSpace(plazaPts, { xMin: -12, xMax: 14, zMin: 10, zMax: 26 }, 'Plazoleta Central');
 
-    // Construir casitas suburbanas ligeras a los lados de las calles y farolas limpias (sin bloat de economía)
-    this.renderSuburbanBlocks();
+    // Construir casitas y edificios en los bloques y farolas limpias
+    if (this.osmBuildings) {
+      this.osmBuildings.buildFromElements([], baseLat, baseLng, this.movementScale, this.roadSegments);
+    } else {
+      this.renderSuburbanBlocks();
+    }
     this.populateAlongRealStreets();
   }
 

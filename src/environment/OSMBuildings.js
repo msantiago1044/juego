@@ -309,10 +309,14 @@ export class OSMBuildings {
   }
 
   // Construir edificios a partir de elementos OSM (soporta tanto Overpass directo como datos de World.js)
-  buildFromElements(elements, baseLat, baseLng, scale = 2.8) {
-    if (!Array.isArray(elements) || elements.length === 0) return 0;
-
+  buildFromElements(elements = [], baseLat, baseLng, scale = 2.8, roadSegments = []) {
     this.clear();
+
+    // Asegurar vinculación activa con la escena de Three.js
+    if (this.scene && this.group.parent !== this.scene) {
+      this.scene.add(this.group);
+    }
+
     const toWorld = this.latLngToWorld || ((lat, lng) => {
       const metersPerDegreeLat = 111139;
       const rad = baseLat * (Math.PI / 180);
@@ -327,7 +331,9 @@ export class OSMBuildings {
     const maxBuildings = 220; // Capacidad optimizada para mantener 60 FPS estables en móviles
     let count = 0;
 
-    for (const el of elements) {
+    const safeElements = Array.isArray(elements) ? elements : [];
+
+    for (const el of safeElements) {
       const tags = el.tags || {};
 
       // 1. Extraer POIs reales (sitios destacados, tiendas, amenidades)
@@ -418,6 +424,101 @@ export class OSMBuildings {
 
           this.buildingColliders.push({ box, cx, cz, height, tags });
           count++;
+        }
+      }
+    }
+
+    // 2.5 Generación de edificios y locales comerciales si faltan huellas OSM detalladas
+    if (buildingGeometries.length < 18 && Array.isArray(roadSegments) && roadSegments.length > 0) {
+      const commercialTemplates = [
+        { name: '🏪 Supermercado La Riviera', type: 'supermarket', category: 'commercial' },
+        { name: '☕ Café Central del Parque', type: 'cafe', category: 'commercial' },
+        { name: '💊 Farmacia San Lucas', type: 'pharmacy', category: 'commercial' },
+        { name: '🍽️ Pizzería Bella Napoli', type: 'restaurant', category: 'commercial' },
+        { name: '🏦 Banco Nacional ATM', type: 'bank', category: 'commercial' },
+        { name: '🥖 Panadería Del Valle', type: 'bakery', category: 'commercial' },
+        { name: '🏨 Hotel Plaza Central', type: 'hotel', category: 'commercial' }
+      ];
+
+      let tmplIdx = 0;
+      const step = Math.max(1, Math.floor(roadSegments.length / 28));
+
+      for (let i = 0; i < roadSegments.length && count < maxBuildings; i += step) {
+        const seg = roadSegments[i];
+        if (!seg) continue;
+        const mx = (seg.ax + seg.bx) * 0.5;
+        const mz = (seg.az + seg.bz) * 0.5;
+        const dx = seg.bx - seg.ax;
+        const dz = seg.bz - seg.az;
+        const len = Math.hypot(dx, dz) || 1;
+        const nx = -dz / len;
+        const nz = dx / len;
+
+        for (const side of [1, -1]) {
+          if (count >= maxBuildings) break;
+          const offset = seg.width * 0.5 + 8.5;
+          const bx = mx + nx * offset * side;
+          const bz = mz + nz * offset * side;
+
+          if (Math.hypot(bx, bz) > 280) continue;
+          if (typeof this.isPositionWalkable === 'function' && this.isPositionWalkable(bx, bz, -0.6)) continue;
+
+          const isShop = (count % 3 === 0);
+          const bW = 10.0 + (count % 3) * 2.0;
+          const bD = 9.0 + ((count + 1) % 3) * 2.0;
+          const height = isShop ? 7.5 : (4.5 + (count % 4) * 2.6);
+
+          let category = 'residential';
+          let tags = { building: 'house' };
+
+          if (isShop) {
+            const tmpl = commercialTemplates[tmplIdx % commercialTemplates.length];
+            tmplIdx++;
+            category = tmpl.category;
+            tags = { name: tmpl.name, amenity: tmpl.type, building: 'commercial' };
+            this.pois.push({
+              id: `proc_${count}`,
+              name: tmpl.name,
+              type: tmpl.type,
+              category: 'commercial',
+              x: bx,
+              z: bz,
+              tags
+            });
+          } else if (count % 5 === 0) {
+            category = 'office';
+            tags = { building: 'office' };
+          }
+
+          const halfW = bW * 0.5;
+          const halfD = bD * 0.5;
+          const pts = [
+            { x: bx - halfW, z: bz - halfD },
+            { x: bx + halfW, z: bz - halfD },
+            { x: bx + halfW, z: bz + halfD },
+            { x: bx - halfW, z: bz + halfD }
+          ];
+
+          const catPalette = this.palettes[category] || this.palettes.residential;
+          const colorPair = catPalette[count % catPalette.length];
+          const wallColorObj = new THREE.Color(colorPair.wall);
+          const roofColorObj = new THREE.Color(colorPair.roof);
+
+          const bGeo = this.createBuildingGeometry(pts, height, wallColorObj, roofColorObj);
+          if (bGeo) {
+            buildingGeometries.push(bGeo);
+
+            const box = new THREE.Box3();
+            box.setFromCenterAndSize(
+              new THREE.Vector3(bx, height * 0.5, bz),
+              new THREE.Vector3(bW * 0.95, height, bD * 0.95)
+            );
+            if (this.physicsWorld) {
+              this.physicsWorld.addStaticBox(box, { label: tags.name || `Edificio (${category})`, category, tags });
+            }
+            this.buildingColliders.push({ box, cx: bx, cz: bz, height, tags });
+            count++;
+          }
         }
       }
     }
