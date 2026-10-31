@@ -281,8 +281,8 @@ export class World {
     // 1. API Oficial de OpenStreetMap (Descarga vectorial pura sin intermediarios ni saturación)
     const officialFetch = this.fetchOsmOfficialApi(lat, lng, timeoutMs, signal);
 
-    // 2. Espejos Overpass con timeout de protección
-    const query = `[out:json][timeout:6];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|living_street|pedestrian|footway)$"](around:420,${lat},${lng});way["leisure"="park"](around:320,${lat},${lng}););out geom;`;
+    // 2. Espejos Overpass con timeout de protección y cobertura completa de parques, canchas y arroyos
+    const query = `[out:json][timeout:7];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|living_street|pedestrian|footway)$"](around:500,${lat},${lng});way["leisure"~"^(park|pitch|playground|garden|recreation_ground|sports_centre)$"](around:500,${lat},${lng});way["landuse"~"^(grass|village_green|recreation_ground|meadow)$"](around:500,${lat},${lng});way["waterway"~"^(stream|drain|canal)$"](around:500,${lat},${lng}););out geom;`;
     const encoded = encodeURIComponent(query);
     const endpoints = [
       `https://overpass-api.de/api/interpreter?data=${encoded}`,
@@ -320,7 +320,7 @@ export class World {
   }
 
   async fetchOsmOfficialApi(lat, lng, timeoutMs = 4000, signal = null) {
-    const delta = 0.0035; // ~390m alrededor del jugador en todas direcciones
+    const delta = 0.0045; // ~500m de radio alrededor del jugador para detectar todos los parques y vías vecinas
     const minLng = (lng - delta).toFixed(5);
     const minLat = (lat - delta).toFixed(5);
     const maxLng = (lng + delta).toFixed(5);
@@ -366,7 +366,12 @@ export class World {
               tags[t.getAttribute('k')] = t.getAttribute('v');
             }
 
-            if (tags.highway || tags.leisure === 'park' || tags.landuse === 'grass') {
+            const isHighway = Boolean(tags.highway);
+            const isPark = /^(park|pitch|playground|garden|recreation_ground|sports_centre)$/.test(tags.leisure) ||
+                           /^(grass|village_green|recreation_ground|meadow)$/.test(tags.landuse);
+            const isWaterway = Boolean(tags.waterway);
+
+            if (isHighway || isPark || isWaterway) {
               const geometry = [];
               const ndEls = w.querySelectorAll('nd');
               for (let j = 0; j < ndEls.length; j++) {
@@ -631,6 +636,7 @@ export class World {
 
     const highwayWays = [];
     const parkWays = [];
+    const waterwayWays = [];
 
     for (const el of osmData.elements) {
       if (el.type === 'way') {
@@ -638,11 +644,12 @@ export class World {
         if (tags.highway) {
           highwayWays.push(el);
         } else if (
-          tags.leisure === 'park' ||
-          tags.landuse === 'grass' ||
-          tags.landuse === 'village_green'
+          /^(park|pitch|playground|garden|recreation_ground|sports_centre|common)$/.test(tags.leisure) ||
+          /^(grass|village_green|recreation_ground|meadow)$/.test(tags.landuse)
         ) {
           parkWays.push(el);
+        } else if (tags.waterway) {
+          waterwayWays.push(el);
         }
       }
     }
@@ -657,7 +664,20 @@ export class World {
       return [];
     };
 
-    // 1. Procesar y renderizar VÍAS PÚBLICAS reales (highway) con calzadas y aceras estilo Pokémon
+    // 1. Procesar y renderizar ARROYOS / CANALES REALES como agua limpia sin cortar el asfalto
+    for (const way of waterwayWays) {
+      const tags = way.tags || {};
+      const pts = extractPoints(way);
+      const canalName = tags.name || 'Arroyo / Canal Pluvial';
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i];
+        const b = pts[i + 1];
+        if (Math.hypot(b.x - a.x, b.z - a.z) < 0.3) continue;
+        this.addWaterwaySegment(a.x, a.z, b.x, b.z, 2.6, canalName);
+      }
+    }
+
+    // 2. Procesar y renderizar VÍAS PÚBLICAS reales (highway) con calzadas limpias y aceras
     const vertexSet = new Set();
     for (const way of highwayWays) {
       const tags = way.tags || {};
@@ -667,15 +687,18 @@ export class World {
 
       if (/^(motorway|trunk|primary|secondary|tertiary|primary_link|secondary_link)$/.test(hw)) {
         width = 6.8;
-      } else if (/^(footway|pedestrian|path|service|cycleway|steps|track)$/.test(hw)) {
-        width = 3.6;
+      } else if (/^(footway|pedestrian|path|steps)$/.test(hw)) {
+        width = 2.4;
         isPedestrian = true;
+      } else if (/^(service|track)$/.test(hw)) {
+        width = 4.2;
+        isPedestrian = false; // Calzadas de acceso pavimentadas limpias
       } else {
         width = 5.2;
       }
 
       const defaultRoadName = isPedestrian
-        ? 'Sendero Peatonal Público'
+        ? 'Paseo Peatonal Público'
         : (width >= 6.2 ? 'Avenida Principal' : 'Calle Pública');
       const roadName = tags.name || tags.ref || defaultRoadName;
 
@@ -702,7 +725,7 @@ export class World {
       }
     }
 
-    // 2. Procesar y renderizar ESPACIOS PÚBLICOS reales (parques, zonas verdes) con hierba alta animada
+    // 3. Procesar y renderizar TODOS LOS PARQUES, CANCHAS Y ÁREAS DEPORTIVAS REALES con acceso 100% libre
     for (const way of parkWays) {
       const tags = way.tags || {};
       const pts = extractPoints(way);
@@ -720,8 +743,16 @@ export class World {
       const cz = (zMin + zMax) * 0.5;
       if (Math.hypot(cx, cz) > 260) continue;
 
-      const parkName = tags.name || 'Parque Público';
-      this.addPublicPolygonSpace(pts, { xMin, xMax, zMin, zMax }, parkName);
+      const isPitch = tags.leisure === 'pitch' || tags.leisure === 'sports_centre';
+      const parkName = tags.name || (isPitch ? 'Cancha Deportiva Pública' : 'Parque Público');
+      this.addPublicPolygonSpace(pts, { xMin, xMax, zMin, zMax }, parkName, isPitch);
+
+      // Conectar el parque/cancha a la calle más cercana para acceso peatonal continuo garantizado
+      const nearestStreetPt = this.getNearestWalkablePoint(cx, cz);
+      const distToStreet = Math.hypot(nearestStreetPt.x - cx, nearestStreetPt.z - cz);
+      if (distToStreet > 1.0 && distToStreet < 60) {
+        this.addRoadSegment(nearestStreetPt.x, nearestStreetPt.z, cx, cz, 3.2, `Acceso a ${parkName}`, 'footway', true);
+      }
     }
 
     // Garantizar plazoleta accesible en el origen (0,0)
@@ -831,6 +862,28 @@ export class World {
     }
   }
 
+  addWaterwaySegment(ax, az, bx, bz, width = 2.6, name = 'Arroyo') {
+    const dx = bx - ax;
+    const dz = bz - az;
+    const length = Math.hypot(dx, dz);
+    if (length < 0.2) return;
+
+    const midX = (ax + bx) * 0.5;
+    const midZ = (az + bz) * 0.5;
+    const angle = Math.atan2(dx, dz);
+
+    // Canal o lecho de agua limpia (altura y = 0.008 para que no corte el asfalto de las calles)
+    const waterMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, length + 0.2),
+      new THREE.MeshLambertMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.82 })
+    );
+    waterMesh.rotation.order = 'YXZ';
+    waterMesh.rotation.y = angle;
+    waterMesh.rotation.x = -Math.PI / 2;
+    waterMesh.position.set(midX, 0.008, midZ);
+    this.dynamicWorldGroup.add(waterMesh);
+  }
+
   addRoadSegment(ax, az, bx, bz, width = 5.0, name = 'Calle Pública', highwayType = 'residential', isPedestrian = false, aLat = null, aLng = null, bLat = null, bLng = null) {
     const startLatLng = (aLat !== null && aLng !== null) ? { lat: aLat, lng: aLng } : this.worldToLatLng(ax, az);
     const endLatLng = (bLat !== null && bLng !== null) ? { lat: bLat, lng: bLng } : this.worldToLatLng(bx, bz);
@@ -859,48 +912,50 @@ export class World {
     const midZ = (az + bz) * 0.5;
     const angle = Math.atan2(dx, dz);
 
-    // Acera / Borde público transitable
-    const sidewalkColor = isPedestrian ? 0xb08d57 : 0x94a3b8;
+    // Acera / Borde peatonal: gris sobrio y limpio (sin barro marrón)
+    const sidewalkColor = 0x94a3b8;
     const sidewalkMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(width + 1.8, length + 0.6),
+      new THREE.PlaneGeometry(isPedestrian ? width + 0.6 : width + 1.8, length + 0.4),
       new THREE.MeshLambertMaterial({ color: sidewalkColor })
     );
     sidewalkMesh.rotation.order = 'YXZ';
     sidewalkMesh.rotation.y = angle;
     sidewalkMesh.rotation.x = -Math.PI / 2;
-    sidewalkMesh.position.set(midX, 0.016, midZ);
+    sidewalkMesh.position.set(midX, isPedestrian ? 0.014 : 0.016, midZ);
     sidewalkMesh.receiveShadow = true;
     this.dynamicWorldGroup.add(sidewalkMesh);
 
-    // Asfalto limpio y nítido (sin fideos de líneas amarillas repetitivas para máxima claridad visual)
-    const roadColor = isPedestrian ? 0xd4b483 : 0x22262e;
+    // Calzada:
+    // Peatonal = adoquín gris claro limpio (0xd1d5db) a y = 0.018
+    // Vehicular = asfalto gris oscuro limpio (0x22262e) a y = 0.025 (pasa siempre por encima)
+    const roadColor = isPedestrian ? 0xd1d5db : 0x22262e;
     const roadMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(width, length + 0.4),
+      new THREE.PlaneGeometry(width, length + 0.3),
       new THREE.MeshLambertMaterial({ color: roadColor })
     );
     roadMesh.rotation.order = 'YXZ';
     roadMesh.rotation.y = angle;
     roadMesh.rotation.x = -Math.PI / 2;
-    roadMesh.position.set(midX, 0.025, midZ);
+    roadMesh.position.set(midX, isPedestrian ? 0.018 : 0.025, midZ);
     roadMesh.receiveShadow = true;
     this.dynamicWorldGroup.add(roadMesh);
   }
 
   createRoadNodeCap(x, z, width, isPedestrian = false) {
     const sidewalkCap = new THREE.Mesh(
-      new THREE.CircleGeometry((width + 1.8) * 0.5, 14),
-      new THREE.MeshLambertMaterial({ color: isPedestrian ? 0xb08d57 : 0x94a3b8 })
+      new THREE.CircleGeometry((isPedestrian ? width + 0.6 : width + 1.8) * 0.5, 14),
+      new THREE.MeshLambertMaterial({ color: 0x94a3b8 })
     );
     sidewalkCap.rotation.x = -Math.PI / 2;
-    sidewalkCap.position.set(x, 0.015, z);
+    sidewalkCap.position.set(x, isPedestrian ? 0.013 : 0.015, z);
     this.dynamicWorldGroup.add(sidewalkCap);
 
     const roadCap = new THREE.Mesh(
       new THREE.CircleGeometry(width * 0.5, 14),
-      new THREE.MeshLambertMaterial({ color: isPedestrian ? 0xd4b483 : 0x262b33 })
+      new THREE.MeshLambertMaterial({ color: isPedestrian ? 0xd1d5db : 0x22262e })
     );
     roadCap.rotation.x = -Math.PI / 2;
-    roadCap.position.set(x, 0.024, z);
+    roadCap.position.set(x, isPedestrian ? 0.017 : 0.024, z);
     this.dynamicWorldGroup.add(roadCap);
   }
 
@@ -927,7 +982,7 @@ export class World {
     this.dynamicWorldGroup.add(disc);
   }
 
-  addPublicPolygonSpace(pts, bounds, name = 'Parque Público') {
+  addPublicPolygonSpace(pts, bounds, name = 'Parque Público', isPitch = false) {
     const cleanPts = pts.map(p => ({
       x: p.x,
       z: p.z,
@@ -939,10 +994,11 @@ export class World {
       points: cleanPts,
       bounds,
       name,
+      isPitch,
       isSpawnBuffer: false
     });
 
-    // Renderizar superficie verde vibrante de Parque Público estilo Pokémon
+    // Renderizar superficie verde vibrante de Parque Público o Cancha Deportiva
     const shape = new THREE.Shape();
     shape.moveTo(cleanPts[0].x, -cleanPts[0].z);
     for (let i = 1; i < cleanPts.length; i++) {
@@ -952,23 +1008,29 @@ export class World {
 
     const parkGeo = new THREE.ShapeGeometry(shape);
     parkGeo.rotateX(-Math.PI / 2);
-    const parkMat = new THREE.MeshLambertMaterial({ color: 0x4fb043, side: THREE.DoubleSide });
+    const parkColor = isPitch ? 0x22c55e : 0x4fb043;
+    const parkMat = new THREE.MeshLambertMaterial({ color: parkColor, side: THREE.DoubleSide });
     const parkMesh = new THREE.Mesh(parkGeo, parkMat);
-    parkMesh.position.y = 0.018;
+    parkMesh.position.y = 0.016;
     parkMesh.receiveShadow = true;
     this.dynamicWorldGroup.add(parkMesh);
 
-    // Poblar el espacio público con Hierba Alta animada estilo Pokémon y flores
-    const cx = (bounds.xMin + bounds.xMax) * 0.5;
-    const cz = (bounds.zMin + bounds.zMax) * 0.5;
-    const w = Math.max(6, Math.min(22, bounds.xMax - bounds.xMin));
-    const d = Math.max(6, Math.min(22, bounds.zMax - bounds.zMin));
+    // Borde delimitador sutil de césped / acera del parque
+    const linePts = [...cleanPts, cleanPts[0]].map(p => new THREE.Vector3(p.x, 0.02, p.z));
+    const borderGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+    const borderMat = new THREE.LineBasicMaterial({ color: isPitch ? 0xffffff : 0x86efac });
+    const borderLine = new THREE.Line(borderGeo, borderMat);
+    this.dynamicWorldGroup.add(borderLine);
 
-    const cols = Math.max(3, Math.min(7, Math.floor(w / 2.2)));
-    const rows = Math.max(3, Math.min(5, Math.floor(d / 2.2)));
-    this.createTallGrassPatch(cx, cz, cols, rows, 1.5);
-    this.createFlowerBed(cx, cz, w * 0.6, d * 0.6);
-    this.createWoodenSign(bounds.xMin + 1.5, bounds.zMax - 1.5, 0x22c55e);
+    if (!isPitch) {
+      const cx = (bounds.xMin + bounds.xMax) * 0.5;
+      const cz = (bounds.zMin + bounds.zMax) * 0.5;
+      const w = Math.max(6, Math.min(22, bounds.xMax - bounds.xMin));
+      const d = Math.max(6, Math.min(22, bounds.zMax - bounds.zMin));
+      const cols = Math.max(3, Math.min(6, Math.floor(w / 3.0)));
+      const rows = Math.max(3, Math.min(5, Math.floor(d / 3.0)));
+      this.createTallGrassPatch(cx, cz, cols, rows, 1.2);
+    }
   }
 
   populateAlongRealStreets() {
@@ -1088,28 +1150,29 @@ export class World {
   }
 
   isInsidePublicSpace(x, z, extraMargin = 0) {
+    const accessTolerance = 3.2 + extraMargin;
     for (const space of this.publicSpaces) {
       if (Number.isFinite(space.radius)) {
-        if (Math.hypot(x - space.cx, z - space.cz) <= space.radius + extraMargin) {
+        if (Math.hypot(x - space.cx, z - space.cz) <= space.radius + accessTolerance) {
           return space;
         }
       } else if (space.points && space.points.length >= 3) {
         const b = space.bounds;
         if (
-          x >= b.xMin - 1.5 - extraMargin &&
-          x <= b.xMax + 1.5 + extraMargin &&
-          z >= b.zMin - 1.5 - extraMargin &&
-          z <= b.zMax + 1.5 + extraMargin
+          x >= b.xMin - accessTolerance &&
+          x <= b.xMax + accessTolerance &&
+          z >= b.zMin - accessTolerance &&
+          z <= b.zMax + accessTolerance
         ) {
           if (this.isPointInPolygon(x, z, space.points)) {
             return space;
           }
-          // Margen de borde de acera del parque
+          // Margen de acceso y aceras perimetrales del parque para permitir entrar y salir fluidamente
           for (let i = 0; i < space.points.length; i++) {
             const a = space.points[i];
             const next = space.points[(i + 1) % space.points.length];
             const info = this.pointToSegmentDistanceInfo(x, z, { ax: a.x, az: a.z, bx: next.x, bz: next.z });
-            if (info.dist <= 1.2 + extraMargin) {
+            if (info.dist <= accessTolerance) {
               return space;
             }
           }
@@ -1117,10 +1180,10 @@ export class World {
       } else if (space.bounds) {
         const b = space.bounds;
         if (
-          x >= b.xMin - extraMargin &&
-          x <= b.xMax + extraMargin &&
-          z >= b.zMin - extraMargin &&
-          z <= b.zMax + extraMargin
+          x >= b.xMin - accessTolerance &&
+          x <= b.xMax + accessTolerance &&
+          z >= b.zMin - accessTolerance &&
+          z <= b.zMax + accessTolerance
         ) {
           return space;
         }
