@@ -2570,4 +2570,422 @@ body, html {
   }
 }
 
+/* ==========================================================================
+   BANNER INTERACTIVO DE PROXIMIDAD DE POIs / EDIFICIOS REALES
+   ========================================================================== */
+.hud-poi-prompt {
+  position: absolute;
+  bottom: 82px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 140;
+  pointer-events: auto;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.hud-poi-prompt.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(16px);
+}
+
+.btn-hud-interact {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(30, 41, 59, 0.96));
+  border: 2px solid #38bdf8;
+  border-radius: 9999px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 16px rgba(56, 189, 248, 0.45);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  cursor: pointer;
+  font-family: var(--font-main);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  animation: poiInteractPulse 2.2s infinite ease-in-out;
+}
+
+.btn-hud-interact:hover,
+.btn-hud-interact:active {
+  transform: scale(1.05);
+  border-color: #7dd3fc;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.7), 0 0 24px rgba(56, 189, 248, 0.65);
+}
+
+@keyframes poiInteractPulse {
+  0%, 100% {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 12px rgba(56, 189, 248, 0.35);
+  }
+  50% {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 22px rgba(56, 189, 248, 0.65);
+  }
+}
+
+.btn-interact-key {
+  background: rgba(56, 189, 248, 0.22);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.5);
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-weight: 800;
+  font-size: 0.82rem;
+  letter-spacing: 0.5px;
+}
+
+.btn-interact-icon {
+  font-size: 1.4rem;
+}
+
+.btn-interact-texts {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+}
+
+.btn-interact-action {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: #94a3b8;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+}
+
+.btn-interact-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f8fafc;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ==========================================================================
+   MODAL DE INTERIORES PROCEDURALES DE EDIFICIOS (LOS SIMS / GTA)
+   ========================================================================== */
+.interior-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(5, 8, 16, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  opacity: 1;
+  transition: opacity 0.25s ease;
+  pointer-events: auto;
+}
+
+.interior-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.interior-modal-box {
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 20px;
+  width: 100%;
+  max-width: 580px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+  animation: modalEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.interior-header {
+  padding: 16px 20px;
+  background: rgba(15, 23, 42, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.interior-title-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.interior-icon {
+  font-size: 2.2rem;
+}
+
+.interior-name {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #f8fafc;
+  margin: 0;
+}
+
+.interior-category {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.btn-interior-close {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #cbd5e1;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-interior-close:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: #ef4444;
+  color: #fca5a5;
+}
+
+/* Barras de Necesidades Biológicas (Sims) */
+.interior-player-status {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  padding: 12px 20px;
+  background: rgba(15, 23, 42, 0.5);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.status-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+
+.meter-icon {
+  font-size: 1.05rem;
+}
+
+.meter-bar {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.fill-hunger { background: linear-gradient(90deg, #ea580c, #f97316); }
+.fill-energy { background: linear-gradient(90deg, #eab308, #facc15); }
+.fill-health { background: linear-gradient(90deg, #dc2626, #ef4444); }
+
+.meter-num {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #94a3b8;
+  min-width: 28px;
+}
+
+.status-cash {
+  font-size: 0.95rem;
+  color: #4ade80;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.interior-description {
+  padding: 12px 20px;
+  font-size: 0.88rem;
+  color: #94a3b8;
+  line-height: 1.4;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Contenido / Tienda / Acciones */
+.interior-content-scroll {
+  padding: 16px 20px;
+  overflow-y: auto;
+  max-height: 48vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.interior-item-card {
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.interior-item-card:hover {
+  background: rgba(30, 41, 59, 0.9);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.interior-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.item-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: #f1f5f9;
+}
+
+.item-cost {
+  font-weight: 800;
+  font-size: 0.92rem;
+  color: #38bdf8;
+}
+
+.item-desc {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.btn-interior-buy,
+.btn-interior-action {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border: none;
+  border-radius: 8px;
+  color: #ffffff;
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+}
+
+.btn-interior-buy:hover,
+.btn-interior-action:hover {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.5);
+  transform: translateY(-1px);
+}
+
+.btn-interior-primary {
+  background: linear-gradient(135deg, #10b981, #059669);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+/* Panel Bancario y Oficinas */
+.interior-bank-panel,
+.interior-office-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.interior-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.interior-stat-box {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 0.78rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.stat-val {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: #4ade80;
+}
+
+.interior-bank-controls {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.interior-footer {
+  padding: 14px 20px;
+  background: rgba(15, 23, 42, 0.8);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.interior-tip {
+  font-size: 0.76rem;
+  color: #64748b;
+}
+
+.btn-interior-exit {
+  background: linear-gradient(135deg, #334155, #1e293b);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f1f5f9;
+  border-radius: 10px;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-interior-exit:hover {
+  background: linear-gradient(135deg, #475569, #334155);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+@media (max-width: 640px) {
+  .hud-poi-prompt {
+    bottom: 96px;
+  }
+  .interior-modal-box {
+    max-height: 85vh;
+  }
+  .interior-player-status {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .interior-bank-controls {
+    grid-template-columns: 1fr;
+  }
+  .interior-footer {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+
 

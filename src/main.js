@@ -13,6 +13,7 @@ import { World } from './environment/World.js';
 
 import { Player } from './entities/Player.js';
 import { ThirdPersonCamera } from './entities/ThirdPersonCamera.js';
+import { BuildingInterior } from './environment/BuildingInterior.js';
 
 import { HUD } from './ui/HUD.js';
 import { GoogleMapsApp } from './ui/GoogleMapsApp.js';
@@ -80,6 +81,8 @@ class GameApp {
     this.player.position.set(0, 0.1, 0);
 
     this.thirdPersonCamera = new ThirdPersonCamera(this.camera, this.container);
+    this.buildingInterior = new BuildingInterior({ game: this, player: this.player, audioManager: this.audioManager });
+    this.activeNearbyPOI = null;
   }
 
   initUI() {
@@ -139,6 +142,11 @@ class GameApp {
         return this.thirdPersonCamera.setMode(modeId);
       }
       return null;
+    };
+    this.hud.onInteractTap = () => {
+      if (this.activeNearbyPOI && !this.buildingInterior.isOpen) {
+        this.buildingInterior.open(this.activeNearbyPOI);
+      }
     };
   }
 
@@ -212,6 +220,10 @@ class GameApp {
             this.hud.showToast(`${nextCfg.icon} Modo ${nextCfg.name}: ${nextCfg.description}`);
           }
         }
+      } else if (e.code === 'KeyE') {
+        if (this.activeNearbyPOI && !this.buildingInterior.isOpen) {
+          this.buildingInterior.open(this.activeNearbyPOI);
+        }
       }
     });
   }
@@ -244,6 +256,21 @@ class GameApp {
     this.weather.update(dt, activePos, this.sky);
     this.world.update(dt, isNight, activePos);
     this.checkZoneTransition(activePos);
+
+    // Actualizar marcadores flotantes 3D de POIs
+    if (this.world?.osmBuildings) {
+      this.world.osmBuildings.update(this.camera.position);
+    }
+
+    // Detección contextual del POI más cercano (para entrar al edificio)
+    const nearestPoi = this.world?.nearestPOI ? this.world.nearestPOI(activePos.x, activePos.z, 7.5) : null;
+    if (nearestPoi && !this.buildingInterior.isOpen) {
+      this.activeNearbyPOI = nearestPoi;
+      this.hud.showPOIPrompt(nearestPoi);
+    } else {
+      this.activeNearbyPOI = null;
+      this.hud.hidePOIPrompt();
+    }
 
     // 4. GPS en tiempo real y HUD
     if (this.mapsApp) {

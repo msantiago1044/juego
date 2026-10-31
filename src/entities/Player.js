@@ -20,6 +20,11 @@ export class Player {
     this.stamina = 100;
     this.maxStamina = 100;
 
+    // Necesidades biológicas vitales (Estilo Los Sims)
+    this.hunger = 85.0; // 0 (hambriento) a 100 (saciado)
+    this.energy = 90.0; // 0 (exhausto) a 100 (lleno de energía)
+    this.health = 100.0; // 0 a 100
+
     // Economía y estatus del jugador
     this.cash = 2500.0; // Saldo inicial
     this.bankBalance = 8000.0;
@@ -244,5 +249,19 @@ export class Player {
 
     this.currentVehicle.exit();
     this.currentVehicle = null;
+  }
+
+  eat(amount = 35) {
+    this.hunger = Math.min(100, Math.max(0, this.hunger + amount));
+    this.health = Math.min(100, this.health + 5);
+  }
+
+  rest(amount = 40) {
+    this.energy = Math.min(100, Math.max(0, this.energy + amount));
+    this.stamina = this.maxStamina;
+  }
+
+  heal(amount = 50) {
+    this.health = Math.min(100, Math.max(0, this.health + amount));
   }
 }

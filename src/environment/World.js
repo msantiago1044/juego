@@ -1,5 +1,6 @@
 // World.js - Generación sincronizada con calles y parques reales (OpenStreetMap Overpass) estilo Pokémon y restricción estricta a vías/espacios públicos
 import * as THREE from 'three';
+import { OSMBuildings } from './OSMBuildings.js';
 
 export class World {
   constructor(scene, physicsWorld) {
@@ -31,6 +32,14 @@ export class World {
     // Grupo estático base (pradera de fondo) y grupo dinámico para calles/parques/edificios reales
     this.dynamicWorldGroup = new THREE.Group();
     this.scene.add(this.dynamicWorldGroup);
+
+    // Módulo optimizado de edificios reales 3D con vertexColors, mergeGeometries y caché IndexedDB
+    this.osmBuildings = new OSMBuildings({
+      scene: this.dynamicWorldGroup,
+      physicsWorld: this.physicsWorld,
+      latLngToWorld: (lat, lng) => this.latLngToWorld(lat, lng),
+      isPositionWalkable: (x, z) => this.isPositionWalkable(x, z)
+    });
 
     this.zones = [
       {
@@ -105,6 +114,9 @@ export class World {
   }
 
   clearDynamicWorld() {
+    if (this.osmBuildings) {
+      this.osmBuildings.clear();
+    }
     while (this.dynamicWorldGroup.children.length > 0) {
       const child = this.dynamicWorldGroup.children.pop();
       this.dynamicWorldGroup.remove(child);
@@ -774,7 +786,9 @@ export class World {
 
     // 5. Procesar y renderizar EDIFICIOS REALES DE OPENSTREETMAP con sus alturas y fachadas
     let buildingCount = 0;
-    if (buildingWays.length > 0) {
+    if (this.osmBuildings) {
+      buildingCount = this.osmBuildings.buildFromElements(osmData.elements, baseLat, baseLng, scale);
+    } else if (buildingWays.length > 0) {
       buildingCount = this.renderRealOsmBuildings(buildingWays, extractPoints);
     }
     if (buildingCount === 0) {
@@ -1499,6 +1513,17 @@ export class World {
         this.onBlockedByPrivateProperty();
       }
     }
+  }
+
+  nearestPOI(x, z, maxDist = 35) {
+    if (this.osmBuildings) {
+      return this.osmBuildings.nearestPOI(x, z, maxDist);
+    }
+    return null;
+  }
+
+  getPOIs() {
+    return this.osmBuildings ? this.osmBuildings.getPOIs() : [];
   }
 
   getZoneAt(position) {

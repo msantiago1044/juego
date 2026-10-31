@@ -14,6 +14,7 @@ export class HUD {
     this.onGpsCenterTap = null;
     this.onMapToggleTap = null;
     this.onCameraModeChange = null;
+    this.onInteractTap = null;
 
     this.currentCameraMode = 'normal';
     this.clockEl = null;
@@ -80,6 +81,18 @@ export class HUD {
         <div class="mobile-joystick-hint">Arrastra para moverte</div>
       </div>
 
+      <!-- Banner / Botón de Interacción Contextual con POIs Reales -->
+      <div class="hud-poi-prompt hidden" id="hud-poi-prompt">
+        <button class="btn-hud-interact" id="btn-hud-interact" type="button" title="Entrar al edificio / interactuar">
+          <span class="btn-interact-key">[E]</span>
+          <span class="btn-interact-icon" id="hud-poi-icon">🏪</span>
+          <div class="btn-interact-texts">
+            <span class="btn-interact-action">Entrar</span>
+            <span class="btn-interact-name" id="hud-poi-name">Lugar de Interés</span>
+          </div>
+        </button>
+      </div>
+
       <!-- Botones de Acción en Esquina Inferior Derecha -->
       <div class="hud-bottom-right">
         <button class="btn-hud-action btn-hud-map" id="btn-hud-map" type="button" title="Ver Mapa Interactivo">
@@ -129,6 +142,20 @@ export class HUD {
       };
       btnMap.addEventListener('click', handleMapToggle);
       btnMap.addEventListener('touchend', handleMapToggle);
+    }
+
+    // Conectar botón de interacción contextual con POIs
+    const btnInteract = this.hudEl.querySelector('#btn-hud-interact');
+    if (btnInteract) {
+      const handleInteract = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof this.onInteractTap === 'function') {
+          this.onInteractTap();
+        }
+      };
+      btnInteract.addEventListener('click', handleInteract);
+      btnInteract.addEventListener('touchend', handleInteract);
     }
   }
 
@@ -333,6 +360,27 @@ export class HUD {
 
     if (this.game?.audioManager) {
       this.game.audioManager.playUiClick();
+    }
+  }
+
+  showPOIPrompt(poi) {
+    const promptEl = this.hudEl.querySelector('#hud-poi-prompt');
+    if (!promptEl || !poi) return;
+    const iconEl = promptEl.querySelector('#hud-poi-icon');
+    const nameEl = promptEl.querySelector('#hud-poi-name');
+    if (iconEl && this.game?.world?.osmBuildings) {
+      iconEl.textContent = this.game.world.osmBuildings.getPOIIcon(poi.type);
+    }
+    if (nameEl) {
+      nameEl.textContent = poi.name || 'Lugar de Interés';
+    }
+    promptEl.classList.remove('hidden');
+  }
+
+  hidePOIPrompt() {
+    const promptEl = this.hudEl.querySelector('#hud-poi-prompt');
+    if (promptEl) {
+      promptEl.classList.add('hidden');
     }
   }
 
