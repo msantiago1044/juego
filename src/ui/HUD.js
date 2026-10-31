@@ -13,7 +13,9 @@ export class HUD {
     this.onJumpTap = null;
     this.onGpsCenterTap = null;
     this.onMapToggleTap = null;
+    this.onCameraModeChange = null;
 
+    this.currentCameraMode = 'normal';
     this.clockEl = null;
 
     this.joystickTouchId = null;
@@ -35,6 +37,25 @@ export class HUD {
           </div>
         </div>
         <div class="hud-top-right">
+          <!-- Selector Rápido de Modos de Cámara -->
+          <div class="hud-camera-selector" id="hud-camera-selector" title="Modos de visualización de cámara">
+            <button class="btn-camera-view active" data-mode="normal" type="button" title="Cámara Normal (3ra Persona)">
+              🚶 <span class="cam-btn-text">Normal</span>
+            </button>
+            <button class="btn-camera-view" data-mode="panoramic" type="button" title="Panorámica Lejana (Ciudad/Barrio)">
+              🔭 <span class="cam-btn-text">Panorámica</span>
+            </button>
+            <button class="btn-camera-view" data-mode="airplane" type="button" title="Vista de Avión / Dron Aéreo">
+              ✈️ <span class="cam-btn-text">Avión</span>
+            </button>
+            <button class="btn-camera-view" data-mode="isometric" type="button" title="Vista Isométrica en Ángulo 45°">
+              📐 <span class="cam-btn-text">Isométrica</span>
+            </button>
+            <button class="btn-camera-view" data-mode="first_person" type="button" title="Primera Persona (Ojos del Personaje)">
+              👁️ <span class="cam-btn-text">1ra Persona</span>
+            </button>
+          </div>
+
           <div class="hud-clock-pill" id="hud-clock-pill" title="Hora actual en vivo">
             🕒 <span id="hud-clock">--:--:--</span>
           </div>
@@ -72,6 +93,7 @@ export class HUD {
         <div><strong>[Mouse / Touch]</strong> Girar cámara</div>
         <div><strong>[Shift]</strong> Correr</div>
         <div><strong>[Espacio]</strong> Saltar</div>
+        <div><strong>[V]</strong> Cambiar Cámara</div>
         <div><strong>[M]</strong> Ver Mapa</div>
         <div><strong>[C]</strong> Centrar GPS</div>
       </div>
@@ -81,6 +103,19 @@ export class HUD {
 
     // Elemento reactivo del reloj
     this.clockEl = this.hudEl.querySelector('#hud-clock');
+
+    // Conectar botones de visualización de cámara
+    const camButtons = this.hudEl.querySelectorAll('.btn-camera-view');
+    camButtons.forEach(btn => {
+      const mode = btn.getAttribute('data-mode');
+      const handleTap = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectCameraMode(mode);
+      };
+      btn.addEventListener('click', handleTap);
+      btn.addEventListener('touchend', handleTap);
+    });
 
     // Conectar botón de mapa interactivo
     const btnMap = this.hudEl.querySelector('#btn-hud-map');
@@ -275,6 +310,29 @@ export class HUD {
           pill.classList.remove('osm-fading');
         }, 500);
       }, 6000);
+    }
+  }
+
+  selectCameraMode(modeId, notify = true) {
+    this.currentCameraMode = modeId;
+    const buttons = this.hudEl.querySelectorAll('.btn-camera-view');
+    buttons.forEach(b => {
+      if (b.getAttribute('data-mode') === modeId) {
+        b.classList.add('active');
+      } else {
+        b.classList.remove('active');
+      }
+    });
+
+    if (notify && typeof this.onCameraModeChange === 'function') {
+      const modeConfig = this.onCameraModeChange(modeId);
+      if (modeConfig) {
+        this.showToast(`${modeConfig.icon} Modo ${modeConfig.name}: ${modeConfig.description}`);
+      }
+    }
+
+    if (this.game?.audioManager) {
+      this.game.audioManager.playUiClick();
     }
   }
 

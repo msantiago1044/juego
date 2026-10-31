@@ -134,6 +134,12 @@ class GameApp {
         this.mapsApp.toggleMapModal();
       }
     };
+    this.hud.onCameraModeChange = (modeId) => {
+      if (this.thirdPersonCamera) {
+        return this.thirdPersonCamera.setMode(modeId);
+      }
+      return null;
+    };
   }
 
   getActiveCityName() {
@@ -197,6 +203,14 @@ class GameApp {
           this.hud.openGpsConfirmModal();
         } else if (this.mapsApp) {
           this.mapsApp.centerPlayerOnRealGps();
+        }
+      } else if (e.code === 'KeyV') {
+        if (this.thirdPersonCamera && this.hud) {
+          const nextCfg = this.thirdPersonCamera.cycleMode();
+          if (nextCfg) {
+            this.hud.selectCameraMode(nextCfg.id, false);
+            this.hud.showToast(`${nextCfg.icon} Modo ${nextCfg.name}: ${nextCfg.description}`);
+          }
         }
       }
     });
