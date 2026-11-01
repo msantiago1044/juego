@@ -238,7 +238,7 @@ export class World {
       ) {
         try {
           sessionStorage.setItem(cacheKey, JSON.stringify(osmData));
-        } catch (e) {}
+        } catch (e) { }
 
         this.lastLoadedCoordKey = coordKey;
         const stats = this.buildFromOSMData(osmData, lat, lng, this.movementScale);
@@ -264,7 +264,7 @@ export class World {
       if (osrmResult && Array.isArray(osrmResult.waypoints) && osrmResult.waypoints.length > 0) {
         try {
           sessionStorage.setItem(osrmCacheKey, JSON.stringify(osrmResult));
-        } catch (e) {}
+        } catch (e) { }
 
         this.lastLoadedCoordKey = coordKey;
         const stats = this.buildFromOSRMData(osrmResult, lat, lng, this.movementScale);
@@ -381,7 +381,7 @@ export class World {
             const isHighway = Boolean(tags.highway);
             const isBuilding = Boolean(tags.building);
             const isPark = /^(park|pitch|playground|garden|recreation_ground|sports_centre)$/.test(tags.leisure) ||
-                           /^(grass|village_green|recreation_ground|meadow)$/.test(tags.landuse);
+              /^(grass|village_green|recreation_ground|meadow)$/.test(tags.landuse);
             const isWaterway = Boolean(tags.waterway);
             const isNatural = /^(coastline|water|beach)$/.test(tags.natural);
 

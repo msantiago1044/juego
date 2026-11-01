@@ -145,6 +145,15 @@ export class Player {
     }
     currentSpeed *= (this.speedMultiplier || 1);
 
+    // Metabolismo biológico continuo
+    if (isMoving) {
+      this.hunger = Math.max(0, this.hunger - deltaSeconds * (isSprinting ? 0.08 : 0.02));
+      this.energy = Math.max(0, this.energy - deltaSeconds * (isSprinting ? 0.06 : 0.015));
+    } else {
+      this.hunger = Math.max(0, this.hunger - deltaSeconds * 0.008);
+      this.energy = Math.min(100, this.energy + deltaSeconds * 0.02);
+    }
+
     if (isMoving) {
       const moveVec = new THREE.Vector3(moveX, 0, moveZ).normalize();
       moveVec.applyAxisAngle(new THREE.Vector3(0, 1, 0), cameraAngleY);

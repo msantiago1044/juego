@@ -32,6 +32,38 @@ export class HUD {
       <!-- Barra Superior Minimalista -->
       <div class="hud-top-bar">
         <div class="hud-top-left">
+          <!-- Barras de Medición Vital del Jugador -->
+          <div class="hud-meters-pill" id="hud-meters-pill">
+            <div class="hud-meter-item" title="Salud del Personaje">
+              <span class="hud-meter-icon">❤️</span>
+              <div class="hud-meter-bar-track">
+                <div class="hud-meter-bar-fill fill-health" id="hud-meter-health" style="width: 100%;"></div>
+              </div>
+              <span class="hud-meter-val" id="hud-val-health">100%</span>
+            </div>
+
+            <div class="hud-meter-item" title="Estamina Biológica (Shift para Correr)">
+              <span class="hud-meter-icon">⚡</span>
+              <div class="hud-meter-bar-track">
+                <div class="hud-meter-bar-fill fill-energy" id="hud-meter-stamina" style="width: 100%;"></div>
+              </div>
+              <span class="hud-meter-val" id="hud-val-stamina">100%</span>
+            </div>
+
+            <div class="hud-meter-item" title="Nutrición / Hambre">
+              <span class="hud-meter-icon">🍗</span>
+              <div class="hud-meter-bar-track">
+                <div class="hud-meter-bar-fill fill-hunger" id="hud-meter-hunger" style="width: 85%;"></div>
+              </div>
+              <span class="hud-meter-val" id="hud-val-hunger">85%</span>
+            </div>
+
+            <div class="hud-cash-item" title="Dinero en Efectivo">
+              <span>💵</span>
+              <strong id="hud-val-cash">$2,500</strong>
+            </div>
+          </div>
+
           <div class="hud-osm-status-pill hidden" id="hud-osm-status-pill">
             <span class="osm-status-icon" id="hud-osm-status-icon">🔄</span>
             <span class="osm-status-text" id="hud-osm-status-text">Descargando vías reales...</span>
@@ -373,6 +405,36 @@ export class HUD {
     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
     if (this.clockEl) {
       this.clockEl.innerText = timeStr;
+    }
+
+    const player = this.game?.player;
+    if (player) {
+      // Salud
+      const health = Math.max(0, Math.min(100, Math.round(player.health ?? 100)));
+      const healthFill = this.hudEl.querySelector('#hud-meter-health');
+      const healthNum = this.hudEl.querySelector('#hud-val-health');
+      if (healthFill) healthFill.style.width = `${health}%`;
+      if (healthNum) healthNum.innerText = `${health}%`;
+
+      // Estamina
+      const stamina = Math.max(0, Math.min(100, Math.round(player.stamina ?? 100)));
+      const staminaFill = this.hudEl.querySelector('#hud-meter-stamina');
+      const staminaNum = this.hudEl.querySelector('#hud-val-stamina');
+      if (staminaFill) staminaFill.style.width = `${stamina}%`;
+      if (staminaNum) staminaNum.innerText = `${stamina}%`;
+
+      // Hambre / Nutrición
+      const hunger = Math.max(0, Math.min(100, Math.round(player.hunger ?? 85)));
+      const hungerFill = this.hudEl.querySelector('#hud-meter-hunger');
+      const hungerNum = this.hudEl.querySelector('#hud-val-hunger');
+      if (hungerFill) hungerFill.style.width = `${hunger}%`;
+      if (hungerNum) hungerNum.innerText = `${hunger}%`;
+
+      // Dinero en efectivo
+      const cashEl = this.hudEl.querySelector('#hud-val-cash');
+      if (cashEl && typeof player.cash === 'number') {
+        cashEl.innerText = `$${Math.round(player.cash).toLocaleString('es-CO')}`;
+      }
     }
   }
 }
